@@ -38,7 +38,7 @@ function ChangePasswordModal({
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     if (!currentUser) return;
@@ -55,7 +55,7 @@ function ChangePasswordModal({
       return;
     }
     setSaving(true);
-    updateUser(currentUser.id, {
+    await updateUser(currentUser.id, {
       password: newPassword,
       ...(required && { mustChangePassword: false }),
       passwordChangedAt: new Date().toISOString().slice(0, 10),

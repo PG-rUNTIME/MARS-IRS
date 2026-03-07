@@ -40,13 +40,13 @@ export function UserManagement() {
     return true;
   });
 
-  const handleEditSave = (id: string) => {
+  const handleEditSave = async (id: string) => {
     const errs: Record<string, string> = {};
     if (!editData.name?.trim()) errs.name = 'Name is required.';
     if (!editData.email?.trim()) errs.email = 'Email is required.';
     if (editData.roles !== undefined && editData.roles.length === 0) errs.roles = 'At least one role is required.';
     if (Object.keys(errs).length) { setErrors(errs); return; }
-    updateUser(id, editData);
+    await updateUser(id, editData);
     setEditingId(null);
     setEditData({});
     setErrors({});
@@ -54,13 +54,13 @@ export function UserManagement() {
     setTimeout(() => setSaved(false), 2000);
   };
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     const errs: Record<string, string> = {};
     if (!newUser.name.trim()) errs.name = 'Name is required.';
     if (!newUser.email.trim()) errs.email = 'Email is required.';
     if (!newUser.roles.length) errs.roles = 'Select at least one role.';
     if (Object.keys(errs).length) { setErrors(errs); return; }
-    addUser(newUser);
+    await addUser(newUser);
     setShowAdd(false);
     setNewUser(EMPTY_USER);
     setErrors({});
@@ -183,7 +183,7 @@ export function UserManagement() {
                     <td className="px-5 py-3.5 text-slate-500 text-xs">{formatDate(user.joinedDate)}</td>
                     <td className="px-5 py-3.5">
                       <button
-                        onClick={() => toggleUserActive(user.id)}
+                        onClick={() => void toggleUserActive(user.id)}
                         className={`text-xs px-2.5 py-1 rounded-full font-medium cursor-pointer transition-all ${user.active ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-red-100 text-red-600 hover:bg-red-200'}`}
                       >
                         {user.active ? 'Active' : 'Inactive'}

@@ -46,7 +46,7 @@ export function NotificationsPage() {
   const unreadCount = myNotifs.filter((n) => !n.read).length;
 
   const handleClick = (notif: AppNotification) => {
-    markNotificationRead(notif.id);
+    void markNotificationRead(notif.id);
     if (notif.requisitionId) {
       navigate(`/requisitions/${notif.requisitionId}`);
     }
@@ -63,7 +63,7 @@ export function NotificationsPage() {
         </div>
         {unreadCount > 0 && (
           <button
-            onClick={() => markAllRead(currentUser.id)}
+            onClick={() => void markAllRead(currentUser.id)}
             className="text-sm px-4 py-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition-all"
           >
             Mark all as read

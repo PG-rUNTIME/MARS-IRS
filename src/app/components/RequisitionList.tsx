@@ -289,7 +289,7 @@ export function RequisitionList({ mode }: RequisitionListProps) {
                         )}
                         {mode === 'my' && req.status === 'Rejected' && (
                           <button
-                            onClick={() => { returnRejectedToDraft(req.id, currentUser); navigate(`/requisitions/${req.id}/edit`); }}
+                            onClick={() => void returnRejectedToDraft(req.id, currentUser).then(() => navigate(`/requisitions/${req.id}/edit`))}
                             className="text-xs font-medium px-3 py-1.5 rounded-lg border border-mars-red text-mars-red hover:bg-mars-red-muted transition-all"
                           >
                             Edit and resubmit

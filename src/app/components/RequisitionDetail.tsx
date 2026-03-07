@@ -81,8 +81,7 @@ export function RequisitionDetail() {
 
   const handleApprove = async () => {
     setLoading('approve');
-    await new Promise((r) => setTimeout(r, 400));
-    approveStep(req.id, currentUser, approveComment);
+    await approveStep(req.id, currentUser, approveComment);
     setShowApproveModal(false);
     setApproveComment('');
     setLoading(null);
@@ -91,8 +90,7 @@ export function RequisitionDetail() {
   const handleReject = async () => {
     if (!rejectReason.trim()) return;
     setLoading('reject');
-    await new Promise((r) => setTimeout(r, 400));
-    rejectRequisition(req.id, currentUser, rejectReason);
+    await rejectRequisition(req.id, currentUser, rejectReason);
     setShowRejectModal(false);
     setRejectReason('');
     setLoading(null);
@@ -101,16 +99,14 @@ export function RequisitionDetail() {
   const handleAddComment = async () => {
     if (!comment.trim()) return;
     setLoading('comment');
-    await new Promise((r) => setTimeout(r, 200));
-    addComment(req.id, comment, isFinanceNote, currentUser);
+    await addComment(req.id, comment, isFinanceNote, currentUser);
     setComment('');
     setLoading(null);
   };
 
   const handleMarkPaid = async () => {
     setLoading('paid');
-    await new Promise((r) => setTimeout(r, 300));
-    markAsPaid(req.id, currentUser);
+    await markAsPaid(req.id, currentUser);
     setLoading(null);
   };
 
@@ -138,14 +134,14 @@ export function RequisitionDetail() {
         uploadedAt: new Date().toISOString(),
         dataUrl,
       };
-      uploadProofOfPayment(req.id, popAttachment, currentUser);
+      await uploadProofOfPayment(req.id, popAttachment, currentUser);
     } finally {
       setLoading(null);
     }
   };
 
-  const handleCancel = () => {
-    cancelRequisition(req.id, currentUser);
+  const handleCancel = async () => {
+    await cancelRequisition(req.id, currentUser);
     setShowCancelModal(false);
   };
 
@@ -195,7 +191,7 @@ export function RequisitionDetail() {
                 ✏️ Edit Draft
               </button>
               <button
-                onClick={() => submitRequisition(req.id, currentUser)}
+                onClick={() => void submitRequisition(req.id, currentUser)}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white bg-mars-red hover:bg-mars-red-dark transition-all"
               >
                 Submit for Approval
@@ -204,7 +200,7 @@ export function RequisitionDetail() {
           )}
           {isRequester && req.status === 'Rejected' && (
             <button
-              onClick={() => { returnRejectedToDraft(req.id, currentUser); navigate(`/requisitions/${req.id}/edit`); }}
+              onClick={() => void returnRejectedToDraft(req.id, currentUser).then(() => navigate(`/requisitions/${req.id}/edit`))}
               className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white bg-mars-red hover:bg-mars-red-dark transition-all"
             >
               ✏️ Edit and resubmit

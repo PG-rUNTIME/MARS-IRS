@@ -6,6 +6,6 @@ while ! python manage.py migrate --noinput 2>/dev/null; do
   sleep 2
 done
 echo "Migrations complete."
-echo "Seeding audit data..."
-python manage.py seed_audit --clear 2>/dev/null || true
+echo "Seeding initial data..."
+python manage.py seed_audit 2>/dev/null || true
 exec "$@"

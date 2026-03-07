@@ -1,0 +1,198 @@
+erDiagram
+    User {
+        string id PK
+        string name
+        string email
+        string password
+        string department
+        bool active
+        string joinedDate
+        string phone
+        string avatar
+        bool mustChangePassword
+        string passwordChangedAt
+    }
+
+    UserRole {
+        string id PK
+        string userId FK
+        string role "Requester | Department Manager | Accountant | General Manager | Financial Controller | Head of Operations | System Administrator | Auditor"
+    }
+
+    Requisition {
+        string id PK
+        string reqNumber
+        string type "Petty Cash | Supplier Payment (Normal) | High-Value/CAPEX"
+        string description
+        string justification
+        float amount
+        string currency "USD | ZIG"
+        string department
+        string costCenter
+        bool budgetAvailable
+        string requesterId FK
+        string requesterName
+        string requesterEmail
+        string status "Draft | Submitted | Pending Review | Pending Approval | Approved | Pending Payment | Paid | Rejected | Cancelled"
+        string createdAt
+        string updatedAt
+        string submittedAt
+        string currentApproverRole
+        string supplier
+        string supplierEmail
+        string supplierPhone
+        string supplierAddress
+        string supplierContact
+        bool isCapex
+        bool poGenerated
+        string poNumber
+        string paidAt
+        string vehicleReg
+        string fuelType
+        float fuelQuantity
+        string travelDestination
+        string travelStartDate
+        string travelEndDate
+        string assetType
+        string assetSpecs
+        string maintenanceItem
+        string maintenanceUrgency "Low | Medium | High | Critical"
+    }
+
+    ApprovalStep {
+        string id PK
+        string requisitionId FK
+        string role
+        string label
+        string approverId
+        string approverName
+        string status "Pending | Approved | Rejected | Delegated | Skipped"
+        string timestamp
+        string comments
+        string delegatedTo
+        string delegatedToName
+    }
+
+    ReqComment {
+        string id PK
+        string requisitionId FK
+        string userId FK
+        string userName
+        string userRole
+        string text
+        string timestamp
+        bool isFinanceNote
+    }
+
+    Attachment {
+        string id PK
+        string requisitionId FK
+        string name
+        string type
+        string size
+        string uploadedBy
+        string uploadedAt
+        string dataUrl
+    }
+
+    ProofOfPayment {
+        string id PK
+        string requisitionId FK
+        string name
+        string type
+        string size
+        string uploadedBy
+        string uploadedAt
+        string dataUrl
+    }
+
+    POItem {
+        string id PK
+        string parentId FK "requisitionId or purchaseOrderId"
+        string parentType "Requisition | PurchaseOrder"
+        string description
+        int quantity
+        string unit
+        float unitPrice
+        float lineTotal
+    }
+
+    PurchaseOrder {
+        string id PK
+        string poNumber
+        string date
+        int version
+        string requisitionId FK
+        string reqNumber
+        string buyerCompany
+        string buyerAddress
+        string buyerDepartment
+        string buyerContact
+        string supplierName
+        string supplierAddress
+        string supplierContact
+        string supplierEmail
+        string supplierPhone
+        string currency
+        float subtotal
+        float total
+        string requesterName
+        string status "Open | Closed | Cancelled"
+        string createdAt
+    }
+
+    AuditEntry {
+        string id PK
+        string action
+        string userId FK
+        string userName
+        string userRole
+        string timestamp
+        string details
+        string requisitionId FK
+        string requisitionNumber
+        string requisitionCurrency
+    }
+
+    AppNotification {
+        string id PK
+        string recipientId FK
+        string title
+        string message
+        string timestamp
+        bool read
+        string requisitionId FK
+        string type "submission | approval | rejection | payment | info"
+    }
+
+    DelegationRecord {
+        string id PK
+        string fromUserId FK
+        string fromUserName
+        string toUserId FK
+        string toUserName
+        string startDate
+        string endDate
+        string reason
+        string createdAt
+        bool active
+    }
+
+    User ||--o{ UserRole : "has"
+    User ||--o{ Requisition : "creates"
+    User ||--o{ ReqComment : "writes"
+    User ||--o{ AuditEntry : "generates"
+    User ||--o{ AppNotification : "receives"
+    User ||--o{ DelegationRecord : "delegates from"
+    User ||--o{ DelegationRecord : "delegates to"
+
+    Requisition ||--o{ ApprovalStep : "has"
+    Requisition ||--o{ ReqComment : "has"
+    Requisition ||--o{ Attachment : "has"
+    Requisition ||--o| ProofOfPayment : "has"
+    Requisition ||--o{ POItem : "has"
+    Requisition ||--o{ AuditEntry : "logged in"
+    Requisition ||--o{ AppNotification : "triggers"
+    Requisition ||--o| PurchaseOrder : "generates"
+
+    PurchaseOrder ||--o{ POItem : "contains"

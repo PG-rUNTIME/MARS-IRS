@@ -167,15 +167,15 @@ export function RequisitionForm() {
     const payload = await buildPayload();
 
     if (isEditMode && editId) {
-      updateRequisition(editId, payload, currentUser);
-      if (andSubmit) submitRequisition(editId, currentUser);
+      await updateRequisition(editId, payload, currentUser);
+      if (andSubmit) await submitRequisition(editId, currentUser);
       setSubmitting(false);
       navigate(`/requisitions/${editId}`);
       return;
     }
 
-    const reqId = createRequisition(payload, currentUser);
-    if (andSubmit) submitRequisition(reqId, currentUser);
+    const reqId = await createRequisition(payload, currentUser);
+    if (andSubmit) await submitRequisition(reqId, currentUser);
     setSubmitting(false);
     navigate(`/requisitions/${reqId}`);
   };
