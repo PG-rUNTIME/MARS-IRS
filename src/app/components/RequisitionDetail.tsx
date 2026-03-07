@@ -46,7 +46,7 @@ const STEP_ICONS: Record<string, React.ReactNode> = {
 export function RequisitionDetail() {
   const { id } = useParams<{ id: string }>();
   const { currentUser } = useAuth();
-  const { requisitions, purchaseOrders, approveStep, rejectRequisition, returnRejectedToDraft, cancelRequisition, addComment, markAsPaid, uploadProofOfPayment, generatePO, submitRequisition } = useApp();
+  const { requisitions, purchaseOrders, approveStep, rejectRequisition, returnRejectedToDraft, cancelRequisition, addComment, uploadProofOfPayment, submitRequisition } = useApp();
   const navigate = useNavigate();
 
   const [approveComment, setApproveComment] = useState('');
@@ -56,7 +56,6 @@ export function RequisitionDetail() {
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [showApproveModal, setShowApproveModal] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
-  const [showDelegateModal, setShowDelegateModal] = useState(false);
   const [loading, setLoading] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -114,12 +113,6 @@ export function RequisitionDetail() {
     setLoading('comment');
     await addComment(req.id, comment, isFinanceNote, currentUser);
     setComment('');
-    setLoading(null);
-  };
-
-  const handleMarkPaid = async () => {
-    setLoading('paid');
-    await markAsPaid(req.id, currentUser);
     setLoading(null);
   };
 
@@ -260,13 +253,6 @@ export function RequisitionDetail() {
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
               Reject
-            </button>
-            <button
-              onClick={() => setShowDelegateModal(true)}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium border border-slate-300 text-slate-600 hover:bg-slate-50 transition-all"
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>
-              Delegate
             </button>
           </div>
         </div>
@@ -736,19 +722,6 @@ export function RequisitionDetail() {
         </div>
       )}
 
-      {/* Delegate Modal */}
-      {showDelegateModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-md">
-            <h3 className="text-slate-800 mb-1">Delegate Approval</h3>
-            <p className="text-slate-500 text-sm mb-4">Delegating approval for {req.reqNumber}. This action will be fully logged in the audit trail.</p>
-            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800 mb-4">
-              Delegation feature is available in the full system. Please contact the System Administrator to configure a formal delegation.
-            </div>
-            <button onClick={() => setShowDelegateModal(false)} className="w-full px-4 py-2.5 border border-slate-200 rounded-lg text-slate-600 text-sm hover:bg-slate-50">Close</button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

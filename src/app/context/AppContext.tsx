@@ -382,15 +382,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const approveStep = async (reqId: string, currentUser: User, comments: string) => {
     const req = requisitions.find(r => r.id === reqId);
-    if (!req) return;
+    if (!req) throw new Error('Requisition not found.');
     const chain = req.approvalChain.map(s => ({ ...s }));
-    // Allow approver to act if they hold the current_approver_role OR their role matches any pending step
+    // Find the pending step whose role matches the current approver role
     const stepIdx = chain.findIndex(
-      s => (req.currentApproverRole ? s.role === req.currentApproverRole : true)
-        && currentUser.roles.includes(s.role as UserRole)
-        && s.status === 'Pending'
+      s => s.status === 'Pending' && s.role === req.currentApproverRole
     );
-    if (stepIdx === -1) return;
+    if (stepIdx === -1) throw new Error('No matching pending step found for your role. Please refresh the page and try again.');
     chain[stepIdx] = { ...chain[stepIdx], status: 'Approved', timestamp: now(), approverName: currentUser.name, approverId: currentUser.id, comments: comments || 'Approved.' };
     const nextPending = chain.find(s => s.status === 'Pending');
     let newStatus: Requisition['status'];
