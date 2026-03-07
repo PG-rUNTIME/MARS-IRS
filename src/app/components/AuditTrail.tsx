@@ -3,9 +3,9 @@ import { useNavigate } from 'react-router';
 import {
   fetchAuditList,
   getAuditExportUrl,
-  isAuditApiEnabled,
-  type AuditEntryDto,
-  type PaginatedAuditResponse,
+  isApiEnabled as isAuditApiEnabled,
+  type ApiAuditEntry as AuditEntryDto,
+  type Paginated as PaginatedAuditResponse,
 } from '../api/client';
 import { useApp } from '../context/AppContext';
 import { formatDateTime } from './shared/StatusBadge';
@@ -64,7 +64,7 @@ function mapDtoToEntry(dto: AuditEntryDto) {
   return {
     id: String(dto.id),
     action: dto.action,
-    userId: dto.user_id,
+    userId: dto.user_id_str,
     userName: dto.user_name,
     userRole: dto.user_role as UserRole,
     timestamp: dto.timestamp,
