@@ -40,6 +40,8 @@ export interface User {
   avatar?: string;
   /** When true, user must change password on next login (e.g. after first sign-in with default password). */
   mustChangePassword?: boolean;
+  /** ISO date when the user last changed their password. Used to enforce 30-day password expiry. */
+  passwordChangedAt?: string;
 }
 
 export interface ApprovalStep {

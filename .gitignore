@@ -7,3 +7,4 @@ dist
 __pycache__/
 *.pyc
 *.pyo
+backend/core/smtp_config.json

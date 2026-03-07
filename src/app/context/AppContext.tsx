@@ -19,6 +19,7 @@ import {
   USERS,
 } from '../data/mockData';
 import { getPrimaryRole } from '../data/roleCapabilities';
+import { sendNotificationEmail } from '../api/client';
 
 interface AppContextValue {
   requisitions: Requisition[];
@@ -98,6 +99,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const addNotification = (notif: Omit<AppNotification, 'id'>) => {
     const id = `notif-${notifCounter++}`;
     setNotifications((prev) => [{ ...notif, id }, ...prev]);
+    const recipient = users.find((u) => u.id === notif.recipientId);
+    if (recipient?.email) {
+      sendNotificationEmail(recipient.email, notif.title, notif.message);
+    }
   };
 
   const updateReq = (id: string, updates: Partial<Requisition>) => {
@@ -266,6 +271,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       });
       addNotification({ recipientId: req.requesterId, title: 'Approval Progress', message: `Your requisition ${req.reqNumber} has been approved and forwarded to the next approver.`, timestamp: now(), read: false, requisitionId: reqId, type: 'approval' });
     }
+    clearNotificationsForRequisition(currentUser.id, reqId);
   };
 
   const rejectRequisition = (reqId: string, currentUser: User, reason: string) => {
@@ -279,6 +285,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     updateReq(reqId, { status: 'Rejected', approvalChain: chain, currentApproverRole: null });
     addAudit({ action: 'Rejected', userId: currentUser.id, userName: currentUser.name, userRole: getPrimaryRole(currentUser.roles), timestamp: now(), details: `${req.reqNumber} rejected by ${currentUser.name}. Reason: ${reason}`, requisitionId: reqId, requisitionNumber: req.reqNumber });
     addNotification({ recipientId: req.requesterId, title: 'Requisition Rejected', message: `Your requisition ${req.reqNumber} has been rejected. Reason: ${reason}. You can edit and resubmit.`, timestamp: now(), read: false, requisitionId: reqId, type: 'rejection' });
+    clearNotificationsForRequisition(currentUser.id, reqId);
   };
 
   const returnRejectedToDraft = (reqId: string, currentUser: User) => {
@@ -292,6 +299,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       submittedAt: undefined,
     });
     addAudit({ action: 'Returned to Draft', userId: currentUser.id, userName: currentUser.name, userRole: getPrimaryRole(currentUser.roles), timestamp: now(), details: `${req.reqNumber} returned to draft for edit and resubmit after rejection.`, requisitionId: reqId, requisitionNumber: req.reqNumber });
+    clearNotificationsForRequisition(currentUser.id, reqId);
   };
 
   const cancelRequisition = (reqId: string, currentUser: User) => {
@@ -299,6 +307,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!req) return;
     updateReq(reqId, { status: 'Cancelled', currentApproverRole: null });
     addAudit({ action: 'Cancelled', userId: currentUser.id, userName: currentUser.name, userRole: getPrimaryRole(currentUser.roles), timestamp: now(), details: `Requisition ${req.reqNumber} cancelled by ${currentUser.name}.`, requisitionId: reqId, requisitionNumber: req.reqNumber });
+    clearNotificationsForRequisition(currentUser.id, reqId);
   };
 
   const addComment = (reqId: string, text: string, isFinanceNote: boolean, currentUser: User) => {
@@ -311,6 +320,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       )
     );
     addAudit({ action: 'Comment Added', userId: currentUser.id, userName: currentUser.name, userRole: getPrimaryRole(currentUser.roles), timestamp: now(), details: `Comment added to ${requisitions.find((r) => r.id === reqId)?.reqNumber || reqId}.`, requisitionId: reqId });
+    clearNotificationsForRequisition(currentUser.id, reqId);
   };
 
   const markAsPendingPayment = (reqId: string, currentUser: User) => {
@@ -319,6 +329,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     updateReq(reqId, { status: 'Pending Payment' });
     addAudit({ action: 'Payment Initiated', userId: currentUser.id, userName: currentUser.name, userRole: getPrimaryRole(currentUser.roles), timestamp: now(), details: `${req.reqNumber} marked as Pending Payment by ${currentUser.name}.`, requisitionId: reqId, requisitionNumber: req.reqNumber });
     addNotification({ recipientId: 'u5', title: 'Payment Processing', message: `Requisition ${req.reqNumber} has been marked as Pending Payment.`, timestamp: now(), read: false, requisitionId: reqId, type: 'payment' });
+    clearNotificationsForRequisition(currentUser.id, reqId);
   };
 
   const markAsPaid = (reqId: string, currentUser: User) => {
@@ -330,6 +341,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     users.filter((u) => u.roles.includes('Accountant') || u.roles.includes('Financial Controller')).forEach((u) => {
       addNotification({ recipientId: u.id, title: 'Payment Confirmed', message: `Payment for ${req.reqNumber} has been recorded as completed.`, timestamp: now(), read: false, requisitionId: reqId, type: 'payment' });
     });
+    clearNotificationsForRequisition(currentUser.id, reqId);
   };
 
   const uploadProofOfPayment = (reqId: string, popAttachment: Attachment, currentUser: User) => {
@@ -338,6 +350,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     updateReq(reqId, { proofOfPayment: popAttachment, status: 'Paid', paidAt: now() });
     addAudit({ action: 'Proof of Payment Uploaded', userId: currentUser.id, userName: currentUser.name, userRole: getPrimaryRole(currentUser.roles), timestamp: now(), details: `Proof of payment uploaded for ${req.reqNumber}. Requisition marked as Paid.`, requisitionId: reqId, requisitionNumber: req.reqNumber });
     addNotification({ recipientId: req.requesterId, title: 'Payment Completed', message: `Payment for your requisition ${req.reqNumber} has been processed and completed.`, timestamp: now(), read: false, requisitionId: reqId, type: 'payment' });
+    clearNotificationsForRequisition(currentUser.id, reqId);
   };
 
   const generatePO = (reqId: string, currentUser: User): string | null => {
@@ -386,6 +399,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const markAllRead = (userId: string) => {
     setNotifications((prev) => prev.map((n) => (n.recipientId === userId ? { ...n, read: true } : n)));
+  };
+
+  /** Mark all notifications for this user about this requisition as read (after user has actioned the request). */
+  const clearNotificationsForRequisition = (recipientId: string, requisitionId: string) => {
+    setNotifications((prev) =>
+      prev.map((n) => (n.recipientId === recipientId && n.requisitionId === requisitionId ? { ...n, read: true } : n))
+    );
   };
 
   const updateUser = (id: string, data: Partial<User>) => {

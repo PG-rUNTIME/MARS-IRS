@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend, LineChart, Line, AreaChart, Area,
 } from 'recharts';
 import { useApp } from '../context/AppContext';
 import { formatCurrency } from './shared/StatusBadge';
+import { exportToExcel, exportToWord } from '../utils/exportUtils';
 
 const COLORS = ['#c41e3a', '#0c2340', '#1e3a5f', '#10B981', '#8B5CF6', '#e8a598', '#06B6D4', '#6B7280', '#84CC16'];
 
@@ -18,34 +19,59 @@ function KPIBox({ label, value, sub, color }: { label: string; value: string | n
   );
 }
 
+function filterByDateRange<T extends { createdAt?: string }>(items: T[], range: string): T[] {
+  if (range === 'all' || !items.length) return items;
+  const now = new Date();
+  let start: Date;
+  if (range === 'month') {
+    start = new Date(now.getFullYear(), now.getMonth(), 1);
+  } else if (range === 'quarter') {
+    const q = Math.floor(now.getMonth() / 3) + 1;
+    start = new Date(now.getFullYear(), (q - 1) * 3, 1);
+  } else if (range === 'year') {
+    start = new Date(now.getFullYear(), 0, 1);
+  } else {
+    return items;
+  }
+  const startMs = start.getTime();
+  return items.filter((r) => new Date((r as { createdAt?: string }).createdAt ?? 0).getTime() >= startMs);
+}
+
 export function Reports() {
   const { requisitions, purchaseOrders } = useApp();
   const [dateRange, setDateRange] = useState('all');
 
-  // Derived data
-  const total = requisitions.length;
-  const paid = requisitions.filter((r) => r.status === 'Paid').length;
-  const pending = requisitions.filter((r) => ['Submitted', 'Pending Review', 'Pending Approval'].includes(r.status)).length;
-  const rejected = requisitions.filter((r) => r.status === 'Rejected').length;
+  const filteredRequisitions = useMemo(
+    () => filterByDateRange(requisitions, dateRange),
+    [requisitions, dateRange]
+  );
+  const filteredPOs = useMemo(
+    () => filterByDateRange(purchaseOrders, dateRange),
+    [purchaseOrders, dateRange]
+  );
 
-  const totalValueUSD = requisitions.filter((r) => r.currency === 'USD').reduce((s, r) => s + r.amount, 0);
-  const totalValueZIG = requisitions.filter((r) => r.currency === 'ZIG').reduce((s, r) => s + r.amount, 0);
+  // Derived data (from filtered requisitions)
+  const total = filteredRequisitions.length;
+  const paid = filteredRequisitions.filter((r) => r.status === 'Paid').length;
+  const pending = filteredRequisitions.filter((r) => ['Submitted', 'Pending Review', 'Pending Approval'].includes(r.status)).length;
+  const rejected = filteredRequisitions.filter((r) => r.status === 'Rejected').length;
+
+  const totalValueUSD = filteredRequisitions.filter((r) => r.currency === 'USD').reduce((s, r) => s + r.amount, 0);
+  const totalValueZIG = filteredRequisitions.filter((r) => r.currency === 'ZIG').reduce((s, r) => s + r.amount, 0);
   const totalValue = totalValueUSD + totalValueZIG;
-  const paidValueUSD = requisitions.filter((r) => r.status === 'Paid' && r.currency === 'USD').reduce((s, r) => s + r.amount, 0);
-  const paidValueZIG = requisitions.filter((r) => r.status === 'Paid' && r.currency === 'ZIG').reduce((s, r) => s + r.amount, 0);
+  const paidValueUSD = filteredRequisitions.filter((r) => r.status === 'Paid' && r.currency === 'USD').reduce((s, r) => s + r.amount, 0);
+  const paidValueZIG = filteredRequisitions.filter((r) => r.status === 'Paid' && r.currency === 'ZIG').reduce((s, r) => s + r.amount, 0);
   const paidValue = paidValueUSD + paidValueZIG;
-  const poCount = purchaseOrders.length;
-  const poValueUSD = purchaseOrders.filter((po) => po.currency === 'USD').reduce((s, po) => s + po.total, 0);
-  const poValueZIG = purchaseOrders.filter((po) => po.currency === 'ZIG').reduce((s, po) => s + po.total, 0);
+  const poCount = filteredPOs.length;
+  const poValueUSD = filteredPOs.filter((po) => po.currency === 'USD').reduce((s, po) => s + po.total, 0);
+  const poValueZIG = filteredPOs.filter((po) => po.currency === 'ZIG').reduce((s, po) => s + po.total, 0);
   const poValue = poValueUSD + poValueZIG;
 
-  // Compliance rate (PO raised before invoice)
-  const poReqs = requisitions.filter((r) => r.type === 'Supplier Payment (Normal)' || r.type === 'High-Value/CAPEX');
+  const poReqs = filteredRequisitions.filter((r) => r.type === 'Supplier Payment (Normal)' || r.type === 'High-Value/CAPEX');
   const poCompliant = poReqs.filter((r) => r.poGenerated).length;
   const poComplianceRate = poReqs.length > 0 ? Math.round((poCompliant / poReqs.length) * 100) : 0;
 
-  // Avg turnaround (mock - days between created and paid)
-  const paidReqs = requisitions.filter((r) => r.status === 'Paid' && r.paidAt);
+  const paidReqs = filteredRequisitions.filter((r) => r.status === 'Paid' && r.paidAt);
   const avgTurnaround = paidReqs.length > 0
     ? Math.round(paidReqs.reduce((s, r) => {
         const days = (new Date(r.paidAt!).getTime() - new Date(r.createdAt).getTime()) / (1000 * 60 * 60 * 24);
@@ -53,15 +79,13 @@ export function Reports() {
       }, 0) / paidReqs.length)
     : 0;
 
-  // Status distribution
   const statusMap: Record<string, number> = {};
-  requisitions.forEach((r) => { statusMap[r.status] = (statusMap[r.status] || 0) + 1; });
+  filteredRequisitions.forEach((r) => { statusMap[r.status] = (statusMap[r.status] || 0) + 1; });
   const statusData = Object.entries(statusMap).map(([name, value]) => ({ name, value }));
 
-  // Monthly data (last 6 months)
   const months = ['Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar'];
   const monthlyData = months.map((m) => {
-    const reqs = requisitions.filter((r) => {
+    const reqs = filteredRequisitions.filter((r) => {
       const mo = new Date(r.createdAt).toLocaleString('en-US', { month: 'short' });
       return mo === m;
     });
@@ -73,9 +97,8 @@ export function Reports() {
     };
   });
 
-  // Department spending (by currency)
   const deptSpend: Record<string, { amount: number; count: number; amountUSD: number; amountZIG: number }> = {};
-  requisitions.forEach((r) => {
+  filteredRequisitions.forEach((r) => {
     if (!deptSpend[r.department]) deptSpend[r.department] = { amount: 0, count: 0, amountUSD: 0, amountZIG: 0 };
     deptSpend[r.department].amount += r.amount;
     deptSpend[r.department].count++;
@@ -86,9 +109,8 @@ export function Reports() {
     .map(([dept, data]) => ({ dept: dept.length > 14 ? dept.slice(0, 14) + '…' : dept, ...data }))
     .sort((a, b) => b.amount - a.amount);
 
-  // Type analysis (by currency)
   const typeMap: Record<string, { count: number; value: number; valueUSD: number; valueZIG: number }> = {};
-  requisitions.forEach((r) => {
+  filteredRequisitions.forEach((r) => {
     if (!typeMap[r.type]) typeMap[r.type] = { count: 0, value: 0, valueUSD: 0, valueZIG: 0 };
     typeMap[r.type].count++;
     typeMap[r.type].value += r.amount;
@@ -97,20 +119,33 @@ export function Reports() {
   });
   const typeData = Object.entries(typeMap).map(([type, data]) => ({ type, ...data })).sort((a, b) => b.value - a.value);
 
-  // Approval backlog
   const backlog: Record<string, number> = {};
-  requisitions.filter((r) => r.currentApproverRole).forEach((r) => {
-    const role = r.currentApproverRole!;
-    backlog[role] = (backlog[role] || 0) + 1;
-  });
+  filteredRequisitions
+    .filter((r) => r.status !== 'Rejected' && r.currentApproverRole && ['Submitted', 'Pending Review', 'Pending Approval'].includes(r.status))
+    .forEach((r) => {
+      const role = r.currentApproverRole!;
+      backlog[role] = (backlog[role] || 0) + 1;
+    });
   const backlogData = Object.entries(backlog).map(([role, count]) => ({ role, count }));
 
-  const handleExportPDF = () => {
-    window.print();
-  };
-  const handleExport = (type: string) => {
-    alert(`Export as ${type} – In the production system, this would generate and download a ${type} report with all current data.`);
-  };
+  const handleExportPDF = () => window.print();
+
+  const reportHeaders = ['Department', 'Total Reqs', 'USD', 'ZIG', 'Approved', 'Pending', 'Rejected', 'Paid'];
+  const reportRows = Object.entries(deptSpend).map(([dept, { count, amountUSD, amountZIG }]) => {
+    const deptReqs = filteredRequisitions.filter((r) => r.department === dept);
+    return [
+      dept,
+      String(count),
+      formatCurrency(amountUSD ?? 0, 'USD'),
+      formatCurrency(amountZIG ?? 0, 'ZIG'),
+      String(deptReqs.filter((r) => ['Approved', 'Pending Payment', 'Paid'].includes(r.status)).length),
+      String(deptReqs.filter((r) => ['Submitted', 'Pending Review', 'Pending Approval'].includes(r.status)).length),
+      String(deptReqs.filter((r) => r.status === 'Rejected').length),
+      String(deptReqs.filter((r) => r.status === 'Paid').length),
+    ];
+  });
+  const handleExportExcel = () => exportToExcel(reportHeaders, reportRows, 'reports_departmental_summary');
+  const handleExportWord = () => exportToWord('Reports & KPIs – Departmental Summary', reportHeaders, reportRows, 'reports_departmental_summary');
 
   return (
     <div className="space-y-6">
@@ -131,9 +166,12 @@ export function Reports() {
             <option value="year">This Year</option>
           </select>
           <div className="flex items-center gap-2">
-            <button onClick={() => handleExport('Excel')} className="flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-300 text-slate-600 text-sm hover:bg-slate-50 transition-all print:hidden">
+            <button onClick={handleExportExcel} className="flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-300 text-slate-600 text-sm hover:bg-slate-50 transition-all print:hidden">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
               Excel
+            </button>
+            <button onClick={handleExportWord} className="flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-300 text-slate-600 text-sm hover:bg-slate-50 transition-all print:hidden">
+              Word
             </button>
             <button onClick={handleExportPDF} className="flex items-center gap-2 px-4 py-2 rounded-lg text-white text-sm transition-all hover:opacity-90 bg-mars-red hover:bg-mars-red-dark print:hidden">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -181,12 +219,12 @@ export function Reports() {
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
           <div className="text-slate-500 text-xs uppercase tracking-wide mb-3">CAPEX Requests</div>
           <div className="text-slate-900 mb-1" style={{ fontSize: '1.5rem', fontWeight: 700 }}>
-            {requisitions.filter((r) => r.isCapex).length}
+            {filteredRequisitions.filter((r) => r.isCapex).length}
           </div>
           <div className="text-slate-500 text-xs">
-            USD: {formatCurrency(requisitions.filter((r) => r.isCapex && r.currency === 'USD').reduce((s, r) => s + r.amount, 0), 'USD')}
+            USD: {formatCurrency(filteredRequisitions.filter((r) => r.isCapex && r.currency === 'USD').reduce((s, r) => s + r.amount, 0), 'USD')}
             {' · '}
-            ZIG: {formatCurrency(requisitions.filter((r) => r.isCapex && r.currency === 'ZIG').reduce((s, r) => s + r.amount, 0), 'ZIG')}
+            ZIG: {formatCurrency(filteredRequisitions.filter((r) => r.isCapex && r.currency === 'ZIG').reduce((s, r) => s + r.amount, 0), 'ZIG')}
           </div>
         </div>
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
@@ -263,8 +301,8 @@ export function Reports() {
               </thead>
               <tbody className="divide-y divide-slate-50">
                 {typeData.map(({ type, count, valueUSD, valueZIG }) => {
-                  const countUSD = requisitions.filter((r) => r.type === type && r.currency === 'USD').length;
-                  const countZIG = requisitions.filter((r) => r.type === type && r.currency === 'ZIG').length;
+                  const countUSD = filteredRequisitions.filter((r) => r.type === type && r.currency === 'USD').length;
+                  const countZIG = filteredRequisitions.filter((r) => r.type === type && r.currency === 'ZIG').length;
                   return (
                     <tr key={type}>
                       <td className="py-2 text-slate-700 text-sm">{type}</td>
@@ -303,7 +341,8 @@ export function Reports() {
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm">
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
           <h3 className="text-slate-800">Departmental Summary</h3>
-          <button onClick={() => handleExport('Excel')} className="text-sm text-mars-red hover:underline">Export →</button>
+          <button onClick={handleExportExcel} className="text-sm text-mars-red hover:underline">Export Excel</button>
+          <button onClick={handleExportWord} className="text-sm text-mars-red hover:underline ml-2">Export Word</button>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -316,7 +355,7 @@ export function Reports() {
             </thead>
             <tbody className="divide-y divide-slate-50">
               {Object.entries(deptSpend).map(([dept, { count, amountUSD, amountZIG }]) => {
-                const deptReqs = requisitions.filter((r) => r.department === dept);
+                const deptReqs = filteredRequisitions.filter((r) => r.department === dept);
                 return (
                   <tr key={dept} className="hover:bg-slate-50">
                     <td className="px-5 py-3 text-slate-800 text-sm font-medium">{dept}</td>

@@ -1,4 +1,5 @@
 import csv
+from django.core.mail import get_connection
 from django.db.models import Q
 from django.http import HttpResponse
 from rest_framework.decorators import api_view, permission_classes
@@ -8,6 +9,7 @@ from rest_framework.response import Response
 
 from .models import AuditEntry
 from .serializers import AuditEntrySerializer
+from .smtp_config import get_smtp_config, get_smtp_config_public, save_smtp_config
 
 
 def _filter_audit_queryset(qs, request):
@@ -71,3 +73,65 @@ def audit_export_csv(request):
             e.details,
         ])
     return response
+
+
+# ─── SMTP / Email notifications ─────────────────────────────────────────────
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def smtp_settings_get(request):
+    """Return current SMTP config for admin UI (no password)."""
+    return Response(get_smtp_config_public())
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def smtp_settings_save(request):
+    """Save SMTP config (admin only in production; allow for demo)."""
+    data = request.data
+    host = data.get('host', '').strip()
+    if not host:
+        return Response({'error': 'Host is required.'}, status=400)
+    try:
+        save_smtp_config(
+            host=host,
+            port=data.get('port', 587),
+            username=data.get('username', ''),
+            password=data.get('password', ''),
+            from_email=data.get('from_email', ''),
+            use_tls=data.get('use_tls', True),
+        )
+        return Response(get_smtp_config_public())
+    except Exception as e:
+        return Response({'error': str(e)}, status=400)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def send_notification_email(request):
+    """Send one notification email. Used by frontend when a notification is created. If SMTP not configured, return 200 with sent=False."""
+    to_email = (request.data.get('to_email') or '').strip()
+    subject = (request.data.get('subject') or 'Notification').strip()
+    body = (request.data.get('body') or '').strip()
+    if not to_email or '@' not in to_email:
+        return Response({'sent': False, 'error': 'Valid to_email required.'}, status=400)
+    config = get_smtp_config()
+    if not config:
+        return Response({'sent': False, 'reason': 'SMTP not configured.'})
+    from_email = config.get('from_email') or config.get('username') or 'noreply@localhost'
+    try:
+        conn = get_connection(
+            backend='django.core.mail.backends.smtp.EmailBackend',
+            host=config.get('host'),
+            port=config.get('port', 587),
+            username=config.get('username') or None,
+            password=config.get('password') or None,
+            use_tls=config.get('use_tls', True),
+            fail_silently=False,
+        )
+        from django.core.mail import EmailMessage
+        msg = EmailMessage(subject=subject, body=body, from_email=from_email, to=[to_email], connection=conn)
+        msg.send()
+        return Response({'sent': True})
+    except Exception as e:
+        return Response({'sent': False, 'error': str(e)}, status=500)

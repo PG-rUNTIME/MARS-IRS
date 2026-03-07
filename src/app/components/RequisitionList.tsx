@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { useApp } from '../context/AppContext';
 import { StatusBadge, formatCurrency, formatDate } from './shared/StatusBadge';
 import type { RequisitionStatus, RequisitionType } from '../data/types';
+import { exportToExcel, exportToWord } from '../utils/exportUtils';
 
 interface RequisitionListProps {
   mode: 'my' | 'all' | 'pending' | 'department';
@@ -21,6 +22,8 @@ export function RequisitionList({ mode }: RequisitionListProps) {
   const [filterStatus, setFilterStatus] = useState('');
   const [filterType, setFilterType] = useState('');
   const [filterDept, setFilterDept] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [sortField, setSortField] = useState<'createdAt' | 'amount' | 'status'>('createdAt');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
@@ -28,7 +31,7 @@ export function RequisitionList({ mode }: RequisitionListProps) {
 
   const baseReqs = useMemo(() => {
     if (mode === 'my') return requisitions.filter((r) => r.requesterId === currentUser.id);
-    if (mode === 'pending') return requisitions.filter((r) => r.currentApproverRole != null && currentUser.roles.includes(r.currentApproverRole));
+    if (mode === 'pending') return requisitions.filter((r) => r.status !== 'Rejected' && r.currentApproverRole != null && currentUser.roles.includes(r.currentApproverRole));
     if (mode === 'department') return requisitions.filter((r) => r.department === currentUser.department);
     return requisitions;
   }, [requisitions, mode, currentUser]);
@@ -38,6 +41,14 @@ export function RequisitionList({ mode }: RequisitionListProps) {
   const filtered = useMemo(() => {
     return baseReqs
       .filter((r) => {
+        if (dateFrom) {
+          const t = new Date(r.createdAt).getTime();
+          if (t < new Date(dateFrom).setHours(0, 0, 0, 0)) return false;
+        }
+        if (dateTo) {
+          const t = new Date(r.createdAt).getTime();
+          if (t > new Date(dateTo).setHours(23, 59, 59, 999)) return false;
+        }
         if (search && !r.description.toLowerCase().includes(search.toLowerCase()) && !r.reqNumber.toLowerCase().includes(search.toLowerCase()) && !r.requesterName.toLowerCase().includes(search.toLowerCase())) return false;
         if (filterStatus && r.status !== filterStatus) return false;
         if (filterType && r.type !== filterType) return false;
@@ -53,7 +64,22 @@ export function RequisitionList({ mode }: RequisitionListProps) {
         if (sortDir === 'asc') return va < vb ? -1 : 1;
         return va > vb ? -1 : 1;
       });
-  }, [baseReqs, search, filterStatus, filterType, filterDept, sortField, sortDir]);
+  }, [baseReqs, search, filterStatus, filterType, filterDept, dateFrom, dateTo, sortField, sortDir]);
+
+  const listExportHeaders = ['Req #', 'Description', 'Type', 'Department', 'Amount', 'Currency', 'Status', 'Created', ...(mode !== 'my' ? ['Requester'] : [])];
+  const listExportRows = filtered.map((r) => [
+    r.reqNumber,
+    r.description ?? '',
+    r.type,
+    r.department,
+    String(r.amount),
+    r.currency,
+    r.status,
+    formatDate(r.createdAt),
+    ...(mode !== 'my' ? [r.requesterName] : []),
+  ]);
+  const handleExportExcel = () => exportToExcel(listExportHeaders, listExportRows, `requisitions_${mode}`);
+  const handleExportWord = () => exportToWord(`${title}`, listExportHeaders, listExportRows, `requisitions_${mode}`);
 
   const title = mode === 'my' ? 'My Requisitions' : mode === 'pending' ? 'Pending Approvals' : mode === 'department' ? 'Department Requisitions' : 'All Requisitions';
   const subtitle = mode === 'my' ? 'Requisitions you have submitted' : mode === 'pending' ? 'Requisitions awaiting your approval' : mode === 'department' ? `All requisitions raised in ${currentUser.department} and their stages` : 'System-wide requisitions';
@@ -81,7 +107,17 @@ export function RequisitionList({ mode }: RequisitionListProps) {
           <h1 className="text-slate-900">{title}</h1>
           <p className="text-slate-500 text-sm">{subtitle}</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-2">
+            <label className="text-slate-500 text-xs">From</label>
+            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="px-2 py-1.5 border border-slate-200 rounded-lg text-sm" />
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-slate-500 text-xs">To</label>
+            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="px-2 py-1.5 border border-slate-200 rounded-lg text-sm" />
+          </div>
+          <button type="button" onClick={handleExportExcel} className="px-3 py-2 rounded-lg border border-slate-200 text-slate-600 text-sm hover:bg-slate-50">Export Excel</button>
+          <button type="button" onClick={handleExportWord} className="px-3 py-2 rounded-lg border border-slate-200 text-slate-600 text-sm hover:bg-slate-50">Export Word</button>
           <div className="text-right hidden md:block">
             <div className="text-slate-500 text-xs">Total Value</div>
             <div className="text-slate-900 font-bold text-sm">
@@ -143,9 +179,9 @@ export function RequisitionList({ mode }: RequisitionListProps) {
               {departments.map((d) => <option key={d} value={d}>{d}</option>)}
             </select>
           )}
-          {(search || filterStatus || filterType || filterDept) && (
+          {(search || filterStatus || filterType || filterDept || dateFrom || dateTo) && (
             <button
-              onClick={() => { setSearch(''); setFilterStatus(''); setFilterType(''); setFilterDept(''); }}
+              onClick={() => { setSearch(''); setFilterStatus(''); setFilterType(''); setFilterDept(''); setDateFrom(''); setDateTo(''); }}
               className="px-3 py-2 text-sm text-slate-500 hover:text-slate-700 border border-slate-200 rounded-lg hover:bg-slate-50 transition-all"
             >
               Clear

@@ -5,10 +5,11 @@ import type { UserRole } from './types';
  * A user with multiple roles gets access if any of their roles is in the list.
  */
 export const SECTION_ACCESS: Record<string, UserRole[]> = {
+  'dashboard': ['Requester', 'Department Manager', 'Accountant', 'General Manager', 'Financial Controller', 'Head of Operations', 'Auditor'],
   'my-requisitions': ['Requester'],
   'all-requisitions': ['Accountant', 'General Manager', 'Financial Controller', 'Head of Operations', 'Auditor'],
-  'purchase-orders': ['Accountant', 'General Manager', 'Financial Controller', 'Auditor', 'Requester', 'System Administrator'],
-  'reports': ['General Manager', 'Financial Controller', 'Accountant', 'Head of Operations', 'Auditor', 'System Administrator'],
+  'purchase-orders': ['Accountant', 'General Manager', 'Financial Controller', 'Auditor', 'Requester'],
+  'reports': ['General Manager', 'Financial Controller', 'Accountant', 'Head of Operations', 'Auditor'],
   'audit-trail': ['Financial Controller', 'Auditor'],
   'admin': ['System Administrator'],
   'database': ['System Administrator'],
@@ -51,6 +52,6 @@ export const ROLE_CAPABILITIES: Record<UserRole, string> = {
   'General Manager': 'Senior approval level. Full requisition visibility and finance actions.',
   'Financial Controller': 'Final approver. Full system visibility, audit trail, PO generation, payment oversight.',
   'Head of Operations': 'Final approver for Petty Cash. Operational oversight, reports access.',
-  'System Administrator': 'User management and system configuration. Can assign roles, create users, and access database health, backup, and restore.',
+  'System Administrator': 'User management and system configuration only. Can assign roles, create users, and access database health, backup, and restore. No access to Dashboard, Finance & Reporting, Purchase Orders, or Reports & KPIs.',
   Auditor: 'Full read-only access to requisitions, audit trail, and reports. Cannot edit records.',
 };

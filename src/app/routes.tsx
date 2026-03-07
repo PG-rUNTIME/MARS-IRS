@@ -10,15 +10,16 @@ import { AuditTrail } from './components/AuditTrail';
 import { NotificationsPage } from './components/NotificationsPage';
 import { UserManagement } from './components/UserManagement';
 import { DatabaseHealthBackup } from './components/DatabaseHealthBackup';
+import { EmailSmtpSettings } from './components/EmailSmtpSettings';
 import { useAuth } from './context/AuthContext';
 
 // Role guard: user must have at least one of the allowed roles (multi-role aware)
-function RequireRole({ roles, children }: { roles?: string[]; children: React.ReactNode }) {
+function RequireRole({ roles, redirectTo = '/dashboard', children }: { roles?: string[]; redirectTo?: string; children: React.ReactNode }) {
   const { currentUser } = useAuth();
   if (!roles || !currentUser) return <>{children}</>;
   const hasAccess = currentUser.roles.some((r) => roles.includes(r));
   if (hasAccess) return <>{children}</>;
-  return <Navigate to="/dashboard" replace />;
+  return <Navigate to={redirectTo} replace />;
 }
 
 export function createAppRouter(onLogout: () => void) {
@@ -28,7 +29,14 @@ export function createAppRouter(onLogout: () => void) {
       element: <Layout onLogout={onLogout} />,
       children: [
         { index: true, element: <Navigate to="/dashboard" replace /> },
-        { path: 'dashboard', element: <Dashboard /> },
+        {
+          path: 'dashboard',
+          element: (
+            <RequireRole roles={['Requester', 'Department Manager', 'Accountant', 'General Manager', 'Financial Controller', 'Head of Operations', 'Auditor']} redirectTo="/admin/users">
+              <Dashboard />
+            </RequireRole>
+          ),
+        },
         {
           path: 'my-requisitions',
           element: (
@@ -81,7 +89,7 @@ export function createAppRouter(onLogout: () => void) {
         {
           path: 'purchase-orders',
           element: (
-            <RequireRole roles={['Accountant', 'General Manager', 'Financial Controller', 'Auditor', 'Requester', 'System Administrator']}>
+            <RequireRole roles={['Accountant', 'General Manager', 'Financial Controller', 'Auditor', 'Requester']}>
               <PurchaseOrders />
             </RequireRole>
           ),
@@ -89,7 +97,7 @@ export function createAppRouter(onLogout: () => void) {
         {
           path: 'reports',
           element: (
-            <RequireRole roles={['Accountant', 'General Manager', 'Financial Controller', 'Head of Operations', 'Auditor', 'System Administrator']}>
+            <RequireRole roles={['Accountant', 'General Manager', 'Financial Controller', 'Head of Operations', 'Auditor']}>
               <Reports />
             </RequireRole>
           ),
@@ -116,6 +124,14 @@ export function createAppRouter(onLogout: () => void) {
           element: (
             <RequireRole roles={['System Administrator']}>
               <DatabaseHealthBackup />
+            </RequireRole>
+          ),
+        },
+        {
+          path: 'admin/email-settings',
+          element: (
+            <RequireRole roles={['System Administrator']}>
+              <EmailSmtpSettings />
             </RequireRole>
           ),
         },

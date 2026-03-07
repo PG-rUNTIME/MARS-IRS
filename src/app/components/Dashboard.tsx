@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -6,7 +7,9 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { useApp } from '../context/AppContext';
 import { StatusBadge, formatCurrency, formatDate } from './shared/StatusBadge';
-import type { RequisitionStatus } from '../data/types';
+import type { RequisitionStatus, Requisition } from '../data/types';
+import { exportToExcel, exportToWord } from '../utils/exportUtils';
+import { FileSpreadsheet, FileText, Download } from 'lucide-react';
 
 /* MARS theme: mars-red, mars-navy, navy-light, accent, then chart palette */
 const COLORS = ['#c41e3a', '#0c2340', '#1e3a5f', '#e8a598', '#5a6c7d', '#8B5CF6', '#06B6D4', '#6B7280'];
@@ -26,16 +29,32 @@ function KPICard({ label, value, sub, color, icon }: { label: string; value: str
   );
 }
 
+function inDateRange(req: Requisition, dateFrom: string, dateTo: string): boolean {
+  if (!dateFrom && !dateTo) return true;
+  const t = new Date(req.createdAt).getTime();
+  if (dateFrom) {
+    const start = new Date(dateFrom).setHours(0, 0, 0, 0);
+    if (t < start) return false;
+  }
+  if (dateTo) {
+    const end = new Date(dateTo).setHours(23, 59, 59, 999);
+    if (t > end) return false;
+  }
+  return true;
+}
+
 export function Dashboard() {
   const { currentUser } = useAuth();
   const { requisitions, notifications } = useApp();
   const navigate = useNavigate();
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
 
   if (!currentUser) return null;
 
   // Role-based filtered view
   const myReqs = requisitions.filter((r) => r.requesterId === currentUser.id);
-  const pendingApprovals = requisitions.filter((r) => r.currentApproverRole != null && currentUser.roles.includes(r.currentApproverRole));
+  const pendingApprovals = requisitions.filter((r) => r.status !== 'Rejected' && r.currentApproverRole != null && currentUser.roles.includes(r.currentApproverRole));
   const unread = notifications.filter((n) => n.recipientId === currentUser.id && !n.read);
 
   const isFinance = currentUser.roles.some((r) => ['Accountant', 'Financial Controller', 'General Manager'].includes(r));
@@ -46,12 +65,13 @@ export function Dashboard() {
 
   // Departmental heads see all requisitions raised within their department (and their various stages)
   const deptReqs = isDeptHead ? requisitions.filter((r) => r.department === currentUser.department) : [];
-  const visibleReqs =
+  const visibleReqsBase =
     isFinance || isManagement || isAuditor || isAdmin
       ? requisitions
       : isDeptHead
         ? deptReqs
         : myReqs;
+  const visibleReqs = visibleReqsBase.filter((r) => inDateRange(r, dateFrom, dateTo));
 
   // KPIs
   const totalAmountUSD = visibleReqs.filter((r) => r.currency === 'USD').reduce((s, r) => s + r.amount, 0);
@@ -92,6 +112,20 @@ export function Dashboard() {
 
   const recentReqs = [...visibleReqs].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()).slice(0, 6);
 
+  const dashboardExportHeaders = ['Req #', 'Description', 'Type', 'Department', 'Amount', 'Currency', 'Status', 'Created'];
+  const dashboardExportRows = visibleReqs.map((r) => [
+    r.reqNumber,
+    r.description ?? '',
+    r.type,
+    r.department,
+    String(r.amount),
+    r.currency,
+    r.status,
+    formatDate(r.createdAt),
+  ]);
+  const handleExportExcel = () => exportToExcel(dashboardExportHeaders, dashboardExportRows, 'dashboard_requisitions');
+  const handleExportWord = () => exportToWord('Dashboard – Requisitions', dashboardExportHeaders, dashboardExportRows, 'dashboard_requisitions');
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -100,17 +134,51 @@ export function Dashboard() {
           <h1 className="text-slate-900">Dashboard</h1>
           <p className="text-slate-500 text-sm">Welcome back, {currentUser.name} · {currentUser.roles.join(', ')}</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <div className="text-slate-500 text-sm hidden md:block">
             {new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-slate-500 text-xs">From</label>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="px-2 py-1.5 border border-slate-200 rounded-lg text-sm text-slate-700"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-slate-500 text-xs">To</label>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="px-2 py-1.5 border border-slate-200 rounded-lg text-sm text-slate-700"
+            />
           </div>
           <button
             type="button"
             onClick={() => window.print()}
             className="flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-300 text-slate-600 text-sm hover:bg-slate-50 transition-all print:hidden"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Download / Print PDF
+            <FileText className="size-4" />
+            PDF
+          </button>
+          <button
+            type="button"
+            onClick={handleExportExcel}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-300 text-slate-600 text-sm hover:bg-slate-50 transition-all print:hidden"
+          >
+            <FileSpreadsheet className="size-4" />
+            Excel
+          </button>
+          <button
+            type="button"
+            onClick={handleExportWord}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-300 text-slate-600 text-sm hover:bg-slate-50 transition-all print:hidden"
+          >
+            <Download className="size-4" />
+            Word
           </button>
         </div>
       </div>

@@ -1,6 +1,6 @@
 # MARS IRS
 
-**MARS  IRS** (Internal Requisitions System) covers both **frontend** (this repo) and **backend** (APIs, auth, persistence). This document describes both.
+**MARS  IRS** (Internal Requisitions System) covers both **frontend** (this repo) and **backend** (APIs, auth, persistence). This document describes both. For a visual overview, see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
 ---
 
@@ -113,6 +113,10 @@ The backend is responsible for **authentication**, **persistence**, and **busine
 Format: `PREFIX` + `YYYYMMDDHHmmssmmm` (no dashes).
 
 ---
+
+## Deploy on Render
+
+You can run the full stack (PostgreSQL + Django backend + frontend) on [Render](https://render.com). See **[docs/DEPLOY-RENDER.md](docs/DEPLOY-RENDER.md)** for step-by-step instructions.
 
 ## License
 

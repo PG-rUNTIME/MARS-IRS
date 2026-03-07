@@ -22,7 +22,10 @@ import {
 } from './ui/table';
 import { Alert, AlertDescription, AlertTitle } from './ui/alert';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
-import { Search, Download, Info } from 'lucide-react';
+import { Search, Download, Info, FileSpreadsheet, FileText } from 'lucide-react';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import { exportToExcel, exportToWord } from '../utils/exportUtils';
 
 const ACTION_COLORS: Record<string, string> = {
   Created: 'bg-blue-100 text-blue-700',
@@ -41,6 +44,7 @@ const ACTION_COLORS: Record<string, string> = {
   'Requisition Submitted': 'bg-indigo-100 text-indigo-700',
   'Requisition Approved': 'bg-green-100 text-green-700',
   'Requisition Rejected': 'bg-mars-red-muted text-mars-red-dark',
+  'Proof of Payment Uploaded': 'bg-teal-100 text-teal-700',
 };
 
 const ROLE_COLORS: Record<string, string> = {
@@ -79,6 +83,9 @@ export function AuditTrail() {
   const [filterAction, setFilterAction] = useState('');
   const [filterRole, setFilterRole] = useState<UserRole | ''>('');
   const [filterUser, setFilterUser] = useState('');
+  const [filterRequisition, setFilterRequisition] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [page, setPage] = useState(1);
 
   const [data, setData] = useState<PaginatedAuditResponse | null>(null);
@@ -97,6 +104,9 @@ export function AuditTrail() {
         action: filterAction || undefined,
         role: filterRole || undefined,
         user: filterUser || undefined,
+        requisition_id: filterRequisition || undefined,
+        date_from: dateFrom || undefined,
+        date_to: dateTo || undefined,
       });
       setData(res);
     } catch (e) {
@@ -105,7 +115,7 @@ export function AuditTrail() {
     } finally {
       setLoading(false);
     }
-  }, [useApi, page, search, filterAction, filterRole, filterUser]);
+  }, [useApi, page, search, filterAction, filterRole, filterUser, filterRequisition, dateFrom, dateTo]);
 
   useEffect(() => {
     if (useApi) {
@@ -114,7 +124,7 @@ export function AuditTrail() {
   }, [useApi, loadFromApi]);
 
   // Fallback: use AppContext when API is not configured (existing behaviour)
-  const fallback = useAppFallback(search, filterAction, filterRole, filterUser, page);
+  const fallback = useAppFallback(search, filterAction, filterRole, filterUser, filterRequisition, dateFrom, dateTo, page);
   const entries = useApi && data ? data.results.map(mapDtoToEntry) : fallback.entries;
   const totalCount = useApi && data ? data.count : fallback.totalCount;
   const totalPages = useApi && data ? Math.max(1, Math.ceil(data.count / PER_PAGE)) : fallback.totalPages;
@@ -123,24 +133,98 @@ export function AuditTrail() {
     : fallback.filterOptions;
   const showPagination = useApi ? (data != null && data.count > PER_PAGE) : fallback.totalPages > 1;
   const paginatedEntries = useApi ? entries : fallback.paginatedEntries;
-  const hasFilters = !!(search || filterAction || filterRole || filterUser);
+  const filteredEntriesForExport = useApi ? entries : fallback.filteredEntriesForExport;
+  const hasFilters = !!(search || filterAction || filterRole || filterUser || filterRequisition || dateFrom || dateTo);
 
   const clearFilters = () => {
     setSearch('');
     setFilterAction('');
     setFilterRole('');
     setFilterUser('');
+    setFilterRequisition('');
+    setDateFrom('');
+    setDateTo('');
     setPage(1);
   };
 
   const getActionColor = (action: string) => ACTION_COLORS[action] ?? 'bg-slate-100 text-slate-600';
 
-  const handleExport = () => {
+  const auditHeaders = ['Timestamp', 'Action', 'User', 'Role', 'Requisition Reference', 'Details'];
+  const rowsFromEntries = (list: typeof paginatedEntries) =>
+    list.map((e) => [
+      formatDateTime(e.timestamp),
+      e.action,
+      e.userName,
+      e.userRole,
+      e.requisitionNumber ? `${e.requisitionNumber} (${e.requisitionCurrency ?? 'USD'})` : '—',
+      e.details,
+    ]);
+
+  const handleExportExcel = () => {
     if (useApi) {
-      window.open(getAuditExportUrl({ search: search || undefined, action: filterAction || undefined, role: filterRole || undefined, user: filterUser || undefined }), '_blank');
+      window.open(
+        getAuditExportUrl({
+          search: search || undefined,
+          action: filterAction || undefined,
+          role: filterRole || undefined,
+          user: filterUser || undefined,
+          requisition_id: filterRequisition || undefined,
+          date_from: dateFrom || undefined,
+          date_to: dateTo || undefined,
+        }),
+        '_blank'
+      );
     } else {
-      alert('In the production system, this would export the audit log as a CSV/Excel file.');
+      exportToExcel(auditHeaders, rowsFromEntries(filteredEntriesForExport), 'audit_trail');
     }
+  };
+
+  const handleExportPDF = () => {
+    const list = useApi ? entries : filteredEntriesForExport;
+    if (list.length === 0) {
+      alert('No audit entries to export.');
+      return;
+    }
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    doc.setFontSize(14);
+    doc.text('Audit Trail', 14, 16);
+    doc.setFontSize(9);
+    doc.text(`Generated: ${new Date().toLocaleString()} | ${list.length} entries`, 14, 22);
+    const tableBody = list.map((e) => [
+      formatDateTime(e.timestamp),
+      e.action,
+      e.userName,
+      e.userRole,
+      e.requisitionNumber ? `${e.requisitionNumber} (${e.requisitionCurrency ?? 'USD'})` : '—',
+      e.details,
+    ]);
+    autoTable(doc, {
+      startY: 26,
+      head: [auditHeaders],
+      body: tableBody,
+      theme: 'grid',
+      headStyles: { fillColor: [12, 35, 64], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
+      bodyStyles: { fontSize: 7 },
+      margin: { left: 14, right: 14 },
+    });
+    doc.save(`audit_trail_${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
+  const handleExportWord = () => {
+    const list = useApi ? entries : filteredEntriesForExport;
+    if (list.length === 0) {
+      alert('No audit entries to export.');
+      return;
+    }
+    exportToWord('Audit Trail', auditHeaders, rowsFromEntries(list), 'audit_trail');
+  };
+
+  const handleReqRefClick = (entry: { requisitionId?: string; requisitionNumber?: string }) => {
+    if (entry.requisitionNumber) {
+      setFilterRequisition(entry.requisitionNumber);
+      setPage(1);
+    }
+    if (entry.requisitionId) navigate(`/requisitions/${entry.requisitionId}`);
   };
 
   return (
@@ -150,12 +234,22 @@ export function AuditTrail() {
           <h1 className="text-2xl font-semibold text-slate-900">Audit Trail</h1>
           <p className="text-slate-500 text-sm mt-0.5">Immutable record of all system actions and user activities</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <span className="text-slate-500 text-sm">{totalCount} entries</span>
-          <Button variant="outline" size="sm" onClick={handleExport} className="gap-2">
-            <Download className="size-4" />
-            Export
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={handleExportExcel} className="gap-2">
+              <FileSpreadsheet className="size-4" />
+              Export Excel
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleExportPDF} className="gap-2">
+              <FileText className="size-4" />
+              Export PDF
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleExportWord} className="gap-2">
+              <Download className="size-4" />
+              Export Word
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -205,6 +299,30 @@ export function AuditTrail() {
             <option value="">All Users</option>
             {filterOptions.users.map((u) => <option key={u} value={u}>{u}</option>)}
           </select>
+          <Input
+            value={filterRequisition}
+            onChange={(e) => { setFilterRequisition(e.target.value); setPage(1); }}
+            placeholder="Requisition ref (e.g. IR…)"
+            className="h-9 min-w-[140px] max-w-[180px]"
+          />
+          <div className="flex items-center gap-2">
+            <label className="text-slate-500 text-xs whitespace-nowrap">From</label>
+            <Input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
+              className="h-9 w-[140px]"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-slate-500 text-xs whitespace-nowrap">To</label>
+            <Input
+              type="date"
+              value={dateTo}
+              onChange={(e) => { setDateTo(e.target.value); setPage(1); }}
+              className="h-9 w-[140px]"
+            />
+          </div>
           {hasFilters && (
             <Button variant="ghost" size="sm" onClick={clearFilters}>Clear</Button>
           )}
@@ -253,7 +371,7 @@ export function AuditTrail() {
                           <Button
                             variant="link"
                             className="text-xs font-mono text-mars-red hover:underline p-0 h-auto"
-                            onClick={() => entry.requisitionId && navigate(`/requisitions/${entry.requisitionId}`)}
+                            onClick={() => handleReqRefClick(entry)}
                           >
                             {entry.requisitionNumber}
                           </Button>
@@ -324,6 +442,9 @@ function useAppFallback(
   filterAction: string,
   filterRole: UserRole | '',
   filterUser: string,
+  filterRequisition: string,
+  dateFrom: string,
+  dateTo: string,
   page: number
 ) {
   const { auditLog, requisitions } = useApp();
@@ -348,9 +469,24 @@ function useAppFallback(
       if (filterAction && e.action !== filterAction) return false;
       if (filterRole && e.userRole !== filterRole) return false;
       if (filterUser && e.userName !== filterUser) return false;
+      if (filterRequisition) {
+        const ref = (e.requisitionNumber ?? '').toLowerCase();
+        const q = filterRequisition.trim().toLowerCase();
+        if (!ref || !ref.includes(q)) return false;
+      }
+      if (dateFrom) {
+        const t = new Date(e.timestamp).getTime();
+        const start = new Date(dateFrom).setHours(0, 0, 0, 0);
+        if (t < start) return false;
+      }
+      if (dateTo) {
+        const t = new Date(e.timestamp).getTime();
+        const end = new Date(dateTo).setHours(23, 59, 59, 999);
+        if (t > end) return false;
+      }
       return true;
     });
-  }, [allLogsWithCurrency, search, filterAction, filterRole, filterUser]);
+  }, [allLogsWithCurrency, search, filterAction, filterRole, filterUser, filterRequisition, dateFrom, dateTo]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PER_PAGE));
   const paginated = filtered.slice((page - 1) * PER_PAGE, page * PER_PAGE);
@@ -363,6 +499,7 @@ function useAppFallback(
     totalCount: filtered.length,
     totalPages,
     paginatedEntries: paginated,
+    filteredEntriesForExport: filtered,
     filterOptions: { actions: uniqueActions, roles: uniqueRoles, users: uniqueUsers },
   };
 }

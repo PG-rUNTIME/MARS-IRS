@@ -350,34 +350,36 @@ export function RequisitionForm() {
       )}
 
       {/* Supporting Documents (optional PDF upload + document name) */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-slate-800">Supporting Documents</h3>
-            <p className="text-slate-400 text-xs mt-0.5">Optional: add document name and/or upload a PDF (e.g. quotation, tax clearance).</p>
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+        <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+          <div className="min-w-0">
+            <h3 className="text-slate-800 font-medium">Supporting Documents</h3>
+            <p className="text-slate-500 text-sm mt-1">Add document names and/or upload PDFs (e.g. quotation, tax clearance). Optional.</p>
           </div>
           <button
+            type="button"
             onClick={() => setAttachments((prev) => [...prev, { name: '', file: null }])}
-            className="text-sm px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:border-slate-300 transition-all"
+            className="shrink-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-200 text-slate-700 text-sm font-medium hover:border-mars-red/40 hover:bg-mars-red-muted/50 transition-all"
           >
-            + Add Document
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Add Document
           </button>
         </div>
-        <div className="space-y-3">
+        <div className="max-h-[260px] overflow-y-auto overflow-x-hidden rounded-lg border border-slate-200 bg-slate-50/50 p-2 space-y-2">
           {attachments.map((att, idx) => (
-            <div key={idx} className="flex flex-wrap items-center gap-2 p-3 rounded-lg border border-slate-100 bg-slate-50/50">
-              <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-mars-red-muted flex items-center justify-center">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--mars-red)" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            <div key={idx} className="flex flex-wrap items-center gap-3 p-3 rounded-lg bg-white border border-slate-200 shadow-sm">
+              <div className="flex-shrink-0 w-9 h-9 rounded-lg bg-mars-red-muted flex items-center justify-center" title="Document">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--mars-red)" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
               </div>
               <input
                 value={att.name}
                 onChange={(e) => setAttachments((prev) => { const next = [...prev]; next[idx] = { ...next[idx], name: e.target.value }; return next; })}
                 placeholder="Document name (optional)"
-                className={`${inputCls} flex-1 min-w-[180px]`}
+                className={`${inputCls} flex-1 min-w-[160px] py-2 text-sm`}
               />
-              <label className="flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 text-slate-600 text-sm cursor-pointer hover:bg-slate-100 transition-all bg-white">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                {att.file ? att.file.name : 'Choose PDF (optional)'}
+              <label className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-slate-200 text-slate-600 text-sm font-medium cursor-pointer hover:border-mars-red/30 hover:bg-mars-red-muted/30 transition-all bg-white shrink-0">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                <span className="truncate max-w-[160px]">{att.file ? att.file.name : 'Choose PDF'}</span>
                 <input
                   type="file"
                   accept=".pdf,application/pdf"
@@ -389,13 +391,19 @@ export function RequisitionForm() {
                 />
               </label>
               {attachments.length > 1 && (
-                <button type="button" onClick={() => setAttachments((prev) => prev.filter((_, i) => i !== idx))} className="text-mars-red hover:text-mars-red-dark p-1">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                <button type="button" onClick={() => setAttachments((prev) => prev.filter((_, i) => i !== idx))} className="flex-shrink-0 p-2 rounded-lg text-slate-400 hover:text-mars-red hover:bg-mars-red-muted/30 transition-colors" title="Remove document">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                 </button>
               )}
             </div>
           ))}
         </div>
+        {attachments.length > 3 && (
+          <p className="text-slate-500 text-xs mt-3 flex items-center gap-1.5">
+            <span className="inline-block w-4 h-4 rounded bg-slate-200 flex items-center justify-center text-slate-500">↕</span>
+            Scroll to see all {attachments.length} documents. Then Save as Draft or Submit.
+          </p>
+        )}
       </div>
 
       {/* Actions */}

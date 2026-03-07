@@ -2,21 +2,33 @@ import { useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import { useApp } from '../context/AppContext';
-import type { UserRole } from '../data/types';
+import type { UserRole, User } from '../data/types';
 import { hasSectionAccess, getPrimaryRole } from '../data/roleCapabilities';
 import { MarsLogo } from './shared/MarsLogo';
+
+const PASSWORD_EXPIRY_DAYS = 30;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+export function isPasswordExpired(user: User): boolean {
+  const ref = user.passwordChangedAt || user.joinedDate;
+  const refMs = new Date(ref).getTime();
+  return Date.now() - refMs >= PASSWORD_EXPIRY_DAYS * MS_PER_DAY;
+}
 
 function ChangePasswordModal({
   onClose,
   onSuccess,
   required = false,
   onLogout,
+  reason = 'first_login',
 }: {
   onClose: () => void;
   onSuccess: () => void;
-  /** When true, user must change password (e.g. first login with default); no cancel, only sign out. */
+  /** When true, user must change password (e.g. first login with default or expired); no cancel, only sign out. */
   required?: boolean;
   onLogout?: () => void;
+  /** Why the change is required: first_login (default password) or expired (30-day policy). */
+  reason?: 'first_login' | 'expired';
 }) {
   const { currentUser } = useAuth();
   const { updateUser } = useApp();
@@ -46,11 +58,17 @@ function ChangePasswordModal({
     updateUser(currentUser.id, {
       password: newPassword,
       ...(required && { mustChangePassword: false }),
+      passwordChangedAt: new Date().toISOString().slice(0, 10),
     });
     setSaving(false);
     onSuccess();
     onClose();
   };
+
+  const requiredMessage =
+    reason === 'expired'
+      ? `Your password is older than ${PASSWORD_EXPIRY_DAYS} days. Please set a new password to continue.`
+      : 'You signed in with the default password. Please set a new password to continue.';
 
   return (
     <div
@@ -63,7 +81,7 @@ function ChangePasswordModal({
         </h3>
         {required && (
           <p className="text-slate-600 text-sm mb-4">
-            You signed in with the default password. Please set a new password to continue.
+            {requiredMessage}
           </p>
         )}
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -168,6 +186,7 @@ const ShieldIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="n
 const BellIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>;
 const UsersIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>;
 const DatabaseIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/></svg>;
+const MailIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>;
 const LogOutIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>;
 const MenuIcon = () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>;
 
@@ -181,18 +200,31 @@ export function Layout({ onLogout }: { onLogout: () => void }) {
   if (!currentUser) return null;
 
   const unreadCount = notifications.filter((n) => n.recipientId === currentUser.id && !n.read).length;
-  const pendingApprovals = requisitions.filter((r) => r.currentApproverRole != null && currentUser.roles.includes(r.currentApproverRole)).length;
+  const pendingApprovals = requisitions.filter((r) => r.status !== 'Rejected' && r.currentApproverRole != null && currentUser.roles.includes(r.currentApproverRole)).length;
 
   const handleLogout = () => {
     onLogout();
     navigate('/login');
   };
 
-  // Force change password on first login when using default password (e.g. mars2026)
+  // Force change password: first login (default password) or password older than 30 days
+  const passwordExpired = isPasswordExpired(currentUser);
   if (currentUser.mustChangePassword) {
     return (
       <ChangePasswordModal
         required
+        reason="first_login"
+        onClose={() => {}}
+        onSuccess={() => {}}
+        onLogout={handleLogout}
+      />
+    );
+  }
+  if (passwordExpired) {
+    return (
+      <ChangePasswordModal
+        required
+        reason="expired"
         onClose={() => {}}
         onSuccess={() => {}}
         onLogout={handleLogout}
@@ -216,7 +248,9 @@ export function Layout({ onLogout }: { onLogout: () => void }) {
       {/* Navigation */}
       <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
         <div className="text-sidebar-foreground/60 text-xs uppercase tracking-wider px-4 py-2 font-medium">Main</div>
-        <NavItem to="/dashboard" icon={<DashboardIcon />} label="Dashboard" />
+        {canAccess(currentUser.roles, 'dashboard') && (
+          <NavItem to="/dashboard" icon={<DashboardIcon />} label="Dashboard" />
+        )}
         {canAccess(currentUser.roles, 'my-requisitions') && (
           <NavItem to="/my-requisitions" icon={<FileIcon />} label="My Requisitions" />
         )}
@@ -250,6 +284,9 @@ export function Layout({ onLogout }: { onLogout: () => void }) {
         <NavItem to="/notifications" icon={<BellIcon />} label="Notifications" badge={unreadCount} />
         {canAccess(currentUser.roles, 'admin') && (
           <NavItem to="/admin/users" icon={<UsersIcon />} label="User Management" />
+        )}
+        {canAccess(currentUser.roles, 'admin') && (
+          <NavItem to="/admin/email-settings" icon={<MailIcon />} label="Email / SMTP" />
         )}
         {canAccess(currentUser.roles, 'database') && (
           <NavItem to="/admin/database" icon={<DatabaseIcon />} label="Database & Backup" />

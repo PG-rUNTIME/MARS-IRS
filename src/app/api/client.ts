@@ -41,6 +41,9 @@ export interface AuditListParams {
   action?: string;
   role?: string;
   user?: string;
+  requisition_id?: string;
+  date_from?: string; // YYYY-MM-DD
+  date_to?: string;   // YYYY-MM-DD
 }
 
 export async function fetchAuditList(params: AuditListParams = {}): Promise<PaginatedAuditResponse> {
@@ -51,6 +54,9 @@ export async function fetchAuditList(params: AuditListParams = {}): Promise<Pagi
   if (params.action) url.searchParams.set('action', params.action);
   if (params.role) url.searchParams.set('role', params.role);
   if (params.user) url.searchParams.set('user', params.user);
+  if (params.requisition_id) url.searchParams.set('requisition_id', params.requisition_id);
+  if (params.date_from) url.searchParams.set('date_from', params.date_from);
+  if (params.date_to) url.searchParams.set('date_to', params.date_to);
 
   const res = await fetch(url.toString(), { credentials: 'include' });
   if (!res.ok) throw new Error(`Audit API error: ${res.status}`);
@@ -64,6 +70,9 @@ export function getAuditExportUrl(params: Omit<AuditListParams, 'page' | 'page_s
   if (params.action) url.searchParams.set('action', params.action);
   if (params.role) url.searchParams.set('role', params.role);
   if (params.user) url.searchParams.set('user', params.user);
+  if (params.requisition_id) url.searchParams.set('requisition_id', params.requisition_id);
+  if (params.date_from) url.searchParams.set('date_from', params.date_from);
+  if (params.date_to) url.searchParams.set('date_to', params.date_to);
   return url.toString();
 }
 
@@ -126,4 +135,53 @@ export async function restoreBackup(filename: string): Promise<{ status: string;
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || `Restore failed: ${res.status}`);
   return data;
+}
+
+// ─── SMTP / Email notifications ─────────────────────────────────────────────
+
+export interface SmtpSettingsPublic {
+  configured: boolean;
+  host?: string;
+  port?: number;
+  username?: string;
+  from_email?: string;
+  use_tls?: boolean;
+}
+
+export interface SmtpSettingsSave {
+  host: string;
+  port?: number;
+  username?: string;
+  password?: string;
+  from_email?: string;
+  use_tls?: boolean;
+}
+
+export async function fetchSmtpSettings(): Promise<SmtpSettingsPublic> {
+  const res = await fetch(`${API_BASE}/api/settings/smtp/`, { credentials: 'include' });
+  if (!res.ok) return { configured: false };
+  return res.json();
+}
+
+export async function saveSmtpSettings(data: SmtpSettingsSave): Promise<SmtpSettingsPublic> {
+  const res = await fetch(`${API_BASE}/api/settings/smtp/save/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(data),
+  });
+  const out = await res.json();
+  if (!res.ok) throw new Error(out.error || `Save failed: ${res.status}`);
+  return out;
+}
+
+/** Send a notification email via backend. Backend sends only if SMTP is configured. Fire-and-forget. */
+export function sendNotificationEmail(to_email: string, subject: string, body: string): void {
+  if (!API_BASE || !to_email || !to_email.includes('@')) return;
+  fetch(`${API_BASE}/api/notifications/send-email/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ to_email, subject, body }),
+  }).catch(() => {});
 }

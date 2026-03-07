@@ -4,6 +4,10 @@ import { useAuth } from '../context/AuthContext';
 import { useApp } from '../context/AppContext';
 import { StatusBadge, formatCurrency, formatDate, formatDateTime } from './shared/StatusBadge';
 import { canDoFinanceActions, canViewFinanceNotes, getPrimaryRole } from '../data/roleCapabilities';
+import { exportToExcel, exportToWord } from '../utils/exportUtils';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import { FileSpreadsheet, FileText } from 'lucide-react';
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -479,6 +483,60 @@ export function RequisitionDetail() {
           {/* Audit Log */}
           {req.auditLog.length > 0 && (
             <Section title="Requisition Activity Log">
+              <div className="flex items-center justify-between gap-2 mb-3">
+                <p className="text-slate-500 text-xs">All changes for this requisition — who did it and when</p>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const headers = ['Timestamp', 'Action', 'User', 'Role', 'Details'];
+                      const rows = req.auditLog.map((e) => [formatDateTime(e.timestamp), e.action, e.userName, e.userRole, e.details]);
+                      exportToExcel(headers, rows, `audit_${req.reqNumber}`);
+                    }}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-600 text-xs hover:bg-slate-50"
+                  >
+                    <FileSpreadsheet className="size-3.5" />
+                    Export Excel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+                      doc.setFontSize(14);
+                      doc.text(`Activity Log: ${req.reqNumber}`, 14, 16);
+                      doc.setFontSize(9);
+                      doc.text(`Requisition: ${req.reqNumber} | Generated: ${new Date().toLocaleString()}`, 14, 22);
+                      const headers = ['Timestamp', 'Action', 'User', 'Role', 'Details'];
+                      const body = req.auditLog.map((e) => [formatDateTime(e.timestamp), e.action, e.userName, e.userRole, e.details]);
+                      autoTable(doc, {
+                        startY: 28,
+                        head: [headers],
+                        body,
+                        theme: 'grid',
+                        headStyles: { fillColor: [12, 35, 64], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
+                        bodyStyles: { fontSize: 7 },
+                        margin: { left: 14, right: 14 },
+                      });
+                      doc.save(`audit_${req.reqNumber}.pdf`);
+                    }}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-600 text-xs hover:bg-slate-50"
+                  >
+                    <FileText className="size-3.5" />
+                    Export PDF
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const headers = ['Timestamp', 'Action', 'User', 'Role', 'Details'];
+                      const rows = req.auditLog.map((e) => [formatDateTime(e.timestamp), e.action, e.userName, e.userRole, e.details]);
+                      exportToWord(`Activity Log – ${req.reqNumber}`, headers, rows, `audit_${req.reqNumber}`);
+                    }}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-600 text-xs hover:bg-slate-50"
+                  >
+                    Export Word
+                  </button>
+                </div>
+              </div>
               <div className="space-y-2">
                 {req.auditLog.map((entry) => (
                   <div key={entry.id} className="flex items-start gap-3 py-2 border-b border-slate-50 last:border-0">
@@ -566,16 +624,20 @@ export function RequisitionDetail() {
                 <span className="text-slate-500 text-xs">Type</span>
                 <span className="text-slate-700 text-xs">{req.type}</span>
               </div>
-              <div className="flex items-center justify-between">
-                <span className="text-slate-500 text-xs">Awaiting</span>
-                <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">{req.currentApproverRole || '—'}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-slate-500 text-xs">PO</span>
-                <span className={`text-xs font-medium ${req.poGenerated ? 'text-green-600' : 'text-slate-400'}`}>
-                  {req.poGenerated ? req.poNumber : 'Not generated'}
-                </span>
-              </div>
+              {req.type !== 'Petty Cash' && (
+                <>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-500 text-xs">Awaiting</span>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">{req.currentApproverRole || '—'}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-500 text-xs">PO</span>
+                    <span className={`text-xs font-medium ${req.poGenerated ? 'text-green-600' : 'text-slate-400'}`}>
+                      {req.poGenerated ? req.poNumber : 'Not generated'}
+                    </span>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>
