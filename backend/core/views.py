@@ -4,6 +4,7 @@ from django.db import transaction
 from django.db.models import Q
 from django.http import HttpResponse
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import AllowAny
@@ -166,8 +167,10 @@ def requisition_detail(request, pk):
             if 'approval_chain' in data:
                 req.approval_chain.all().delete()
                 for step_data in data['approval_chain']:
-                    approver_id = step_data.get('approver_id')
-                    delegated_to_id = step_data.get('delegated_to_id')
+                    approver_id = step_data.get('approver_id') or None
+                    delegated_to_id = step_data.get('delegated_to_id') or None
+                    raw_ts = step_data.get('timestamp')
+                    ts = parse_datetime(raw_ts) if isinstance(raw_ts, str) else raw_ts
                     ApprovalStep.objects.create(
                         requisition=req,
                         order=step_data.get('order', 0),
@@ -176,7 +179,7 @@ def requisition_detail(request, pk):
                         approver_id=approver_id,
                         approver_name=step_data.get('approver_name', ''),
                         status=step_data.get('status', 'Pending'),
-                        timestamp=step_data.get('timestamp'),
+                        timestamp=ts,
                         comments=step_data.get('comments', ''),
                         delegated_to_id=delegated_to_id,
                         delegated_to_name=step_data.get('delegated_to_name', ''),
@@ -201,6 +204,11 @@ def requisition_detail(request, pk):
                            data.get('actor_user_role', ''), data['audit_action'],
                            data.get('audit_details', f"Requisition {req.req_number} updated."))
 
+        # Re-fetch from DB to get fresh relations after mutations
+        req = Requisition.objects.select_related('requester').prefetch_related(
+            'approval_chain', 'comments', 'attachments', 'items',
+            'audit_entries', 'purchase_order',
+        ).get(pk=pk)
         return Response(RequisitionDetailSerializer(req).data)
 
     req.delete()

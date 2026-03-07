@@ -58,6 +58,7 @@ export function RequisitionDetail() {
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [showDelegateModal, setShowDelegateModal] = useState(false);
   const [loading, setLoading] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const req = requisitions.find((r) => r.id === id);
 
@@ -81,19 +82,31 @@ export function RequisitionDetail() {
 
   const handleApprove = async () => {
     setLoading('approve');
-    await approveStep(req.id, currentUser, approveComment);
-    setShowApproveModal(false);
-    setApproveComment('');
-    setLoading(null);
+    setActionError(null);
+    try {
+      await approveStep(req.id, currentUser, approveComment);
+      setShowApproveModal(false);
+      setApproveComment('');
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : 'Approval failed. Please try again.');
+    } finally {
+      setLoading(null);
+    }
   };
 
   const handleReject = async () => {
     if (!rejectReason.trim()) return;
     setLoading('reject');
-    await rejectRequisition(req.id, currentUser, rejectReason);
-    setShowRejectModal(false);
-    setRejectReason('');
-    setLoading(null);
+    setActionError(null);
+    try {
+      await rejectRequisition(req.id, currentUser, rejectReason);
+      setShowRejectModal(false);
+      setRejectReason('');
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : 'Rejection failed. Please try again.');
+    } finally {
+      setLoading(null);
+    }
   };
 
   const handleAddComment = async () => {
@@ -216,6 +229,15 @@ export function RequisitionDetail() {
           )}
         </div>
       </div>
+
+      {/* Action Error */}
+      {actionError && (
+        <div className="bg-red-50 border border-red-300 rounded-xl p-4 flex items-start gap-3">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="2" className="shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12" y2="16"/></svg>
+          <span className="text-red-700 text-sm">{actionError}</span>
+          <button onClick={() => setActionError(null)} className="ml-auto text-red-400 hover:text-red-600 shrink-0">✕</button>
+        </div>
+      )}
 
       {/* Approval Actions */}
       {isCurrentApprover && !isAuditor && (

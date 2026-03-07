@@ -384,7 +384,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const req = requisitions.find(r => r.id === reqId);
     if (!req) return;
     const chain = req.approvalChain.map(s => ({ ...s }));
-    const stepIdx = chain.findIndex(s => currentUser.roles.includes(s.role) && s.status === 'Pending');
+    // Allow approver to act if they hold the current_approver_role OR their role matches any pending step
+    const stepIdx = chain.findIndex(
+      s => (req.currentApproverRole ? s.role === req.currentApproverRole : true)
+        && currentUser.roles.includes(s.role as UserRole)
+        && s.status === 'Pending'
+    );
     if (stepIdx === -1) return;
     chain[stepIdx] = { ...chain[stepIdx], status: 'Approved', timestamp: now(), approverName: currentUser.name, approverId: currentUser.id, comments: comments || 'Approved.' };
     const nextPending = chain.find(s => s.status === 'Pending');
