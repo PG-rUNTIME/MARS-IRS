@@ -204,6 +204,22 @@ def requisition_detail(request, pk):
                            data.get('actor_user_role', ''), data['audit_action'],
                            data.get('audit_details', f"Requisition {req.req_number} updated."))
 
+        # Set submitted_at / paid_at server-side based on payload intent.
+        # Client sends non-null to set, null to clear — we use server clock for the actual value.
+        updates = {}
+        if 'submitted_at' in data:
+            if data.get('submitted_at') is not None and req.submitted_at is None:
+                updates['submitted_at'] = timezone.now()
+            elif data.get('submitted_at') is None:
+                updates['submitted_at'] = None
+        if 'paid_at' in data:
+            if data.get('paid_at') is not None and req.paid_at is None:
+                updates['paid_at'] = timezone.now()
+            elif data.get('paid_at') is None:
+                updates['paid_at'] = None
+        if updates:
+            Requisition.objects.filter(pk=pk).update(**updates)
+
         # Re-fetch from DB to get fresh relations after mutations
         req = Requisition.objects.select_related('requester').prefetch_related(
             'approval_chain', 'comments', 'attachments', 'items',

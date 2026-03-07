@@ -148,7 +148,6 @@ class RequisitionWriteSerializer(serializers.ModelSerializer):
             'vehicle_reg', 'fuel_type', 'fuel_quantity',
             'travel_destination', 'travel_start_date', 'travel_end_date',
             'asset_type', 'asset_specs', 'maintenance_item', 'maintenance_urgency',
-            'submitted_at', 'paid_at',
         ]
 
 
