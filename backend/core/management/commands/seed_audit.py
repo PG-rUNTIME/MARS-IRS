@@ -1,4 +1,7 @@
+from datetime import date
+
 from django.core.management.base import BaseCommand
+
 from core.models import User, UserRole
 
 
@@ -17,6 +20,7 @@ class Command(BaseCommand):
             department='Information Technology',
             active=True,
             must_change_password=False,
+            joined_date=date.today(),
         )
         UserRole.objects.create(user=admin, role='System Administrator')
         self.stdout.write(self.style.SUCCESS(

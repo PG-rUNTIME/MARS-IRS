@@ -202,7 +202,7 @@ interface AppContextValue {
   auditLog: AuditEntry[];
   users: User[];
   loading: boolean;
-  reload: () => void;
+  reload: () => Promise<void>;
   createRequisition: (data: Partial<Requisition>, currentUser: User) => Promise<string>;
   updateRequisition: (id: string, data: Partial<Requisition>, currentUser: User) => Promise<void>;
   submitRequisition: (id: string, currentUser: User) => Promise<void>;
