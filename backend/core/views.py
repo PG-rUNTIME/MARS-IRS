@@ -550,6 +550,25 @@ def _filter_audit_queryset(qs, request):
     user = (params.get('user') or '').strip()
     if user:
         qs = qs.filter(user_name=user)
+    req_id = (params.get('requisition_id') or '').strip()
+    if req_id:
+        qs = qs.filter(requisition__req_number__icontains=req_id)
+    date_from = (params.get('date_from') or '').strip()
+    if date_from:
+        try:
+            from datetime import datetime as dt_parse
+            d = dt_parse.strptime(date_from, '%Y-%m-%d').date()
+            qs = qs.filter(timestamp__date__gte=d)
+        except ValueError:
+            pass
+    date_to = (params.get('date_to') or '').strip()
+    if date_to:
+        try:
+            from datetime import datetime as dt_parse
+            d = dt_parse.strptime(date_to, '%Y-%m-%d').date()
+            qs = qs.filter(timestamp__date__lte=d)
+        except ValueError:
+            pass
     return qs
 
 
@@ -583,6 +602,53 @@ def audit_list(request):
     if page is not None:
         return paginator.get_paginated_response(AuditEntrySerializer(page, many=True).data)
     return Response(AuditEntrySerializer(qs, many=True).data)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def audit_requisitions_list(request):
+    """One row per requisition: latest activity and action count. For audit trail summary view."""
+    qs = (
+        AuditEntry.objects.select_related('requisition')
+        .filter(requisition_id__isnull=False)
+        .order_by('-timestamp')
+    )
+    qs = _filter_audit_queryset(qs, request)
+    max_entries = 5000
+    entries = list(qs[:max_entries])
+    # Group by requisition_id (entries already -timestamp, so first in group is latest)
+    by_req = {}
+    for e in entries:
+        rid = e.requisition_id
+        if rid not in by_req:
+            by_req[rid] = []
+        by_req[rid].append(e)
+    rows = []
+    for req_id, group in by_req.items():
+        latest = group[0]
+        req = latest.requisition
+        rows.append({
+            'requisition_id': req_id,
+            'requisition_number': req.req_number if req else None,
+            'requisition_currency': req.currency if req else None,
+            'latest_timestamp': latest.timestamp.isoformat(),
+            'latest_action': latest.action,
+            'latest_user_name': latest.user_name,
+            'latest_user_role': latest.user_role,
+            'action_count': len(group),
+        })
+    rows.sort(key=lambda r: r['latest_timestamp'], reverse=True)
+    page = int(request.query_params.get('page', 1))
+    page_size = min(50, max(1, int(request.query_params.get('page_size', 25))))
+    start = (page - 1) * page_size
+    end = start + page_size
+    paginated = rows[start:end]
+    return Response({
+        'count': len(rows),
+        'next': f'?page={page + 1}' if end < len(rows) else None,
+        'previous': f'?page={page - 1}' if page > 1 else None,
+        'results': paginated,
+    })
 
 
 @api_view(['GET'])

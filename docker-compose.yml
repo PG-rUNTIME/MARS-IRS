@@ -1,6 +1,7 @@
 services:
   db:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ir_db
       POSTGRES_USER: postgres
@@ -17,6 +18,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    restart: unless-stopped
     ports:
       - "8001:8000"
     environment:
@@ -39,7 +41,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.frontend
-      args:
+    restart: unless-stopped
+    args:
         # Empty = use relative /api/ so nginx proxies to backend (same origin, no CORS)
         VITE_API_BASE: ""
     ports:

@@ -114,10 +114,6 @@ Format: `PREFIX` + `YYYYMMDDHHmmssmmm` (no dashes).
 
 ---
 
-## Deploy on Render
-
-You can run the full stack (PostgreSQL + Django backend + frontend) on [Render](https://render.com). See **[docs/DEPLOY-RENDER.md](docs/DEPLOY-RENDER.md)** for step-by-step instructions.
-
 ## License
 
 Private / internal use.

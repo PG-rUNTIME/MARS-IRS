@@ -32,6 +32,7 @@ urlpatterns = [
 
     # Audit
     path('audit/', views.audit_list),
+    path('audit/requisitions/', views.audit_requisitions_list),
     path('audit/export/', views.audit_export_csv),
 
     # Database admin

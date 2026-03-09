@@ -6,57 +6,89 @@ import { useApp } from '../context/AppContext';
 import { formatCurrency, formatDate, formatDateTime } from './shared/StatusBadge';
 import type { PurchaseOrder } from '../data/types';
 
+const LINE_HEIGHT = 5;
+const HALF = 0.5;
+
 function downloadPOAsPDF(po: PurchaseOrder) {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const pageW = doc.getPageWidth();
   const margin = 14;
+  const colWidth = (pageW - 2 * margin - 8) / 2; // Buyer and Supplier columns
   let y = 20;
+
+  // Helper: draw right-aligned text
+  const textRight = (str: string, xMax: number, yPos: number, fontSize?: number) => {
+    if (fontSize != null) doc.setFontSize(fontSize);
+    const w = doc.getTextWidth(str);
+    doc.text(str, xMax - w, yPos);
+  };
+
+  // Helper: wrap text and return line count
+  const wrapText = (str: string, maxW: number): string[] => doc.splitTextToSize(str || '—', maxW);
 
   // Header
   doc.setFillColor(12, 35, 64); // mars-navy
-  doc.rect(0, 0, pageW, 32, 'F');
+  doc.rect(0, 0, pageW, 36, 'F');
   doc.setTextColor(255, 255, 255);
-  doc.setFontSize(18);
-  doc.setFont('helvetica', 'bold');
-  doc.text(po.buyerCompany, margin, 14);
-  doc.setFontSize(9);
-  doc.setFont('helvetica', 'normal');
-  doc.text('Emergency Medical Services', margin, 20);
-  doc.text(po.buyerAddress, margin, 25);
-  doc.setFontSize(8);
-  doc.text('PURCHASE ORDER', pageW - margin, 12);
+  const leftHeaderW = pageW * HALF - margin - 4;
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
-  doc.text(po.poNumber, pageW - margin, 18);
+  const buyerLines = wrapText(po.buyerCompany, leftHeaderW);
+  doc.text(buyerLines, margin, 12);
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  const subLines = wrapText('Emergency Medical Services', leftHeaderW);
+  doc.text(subLines, margin, 12 + buyerLines.length * LINE_HEIGHT);
+  const addrLines = wrapText(po.buyerAddress, leftHeaderW);
+  doc.text(addrLines, margin, 12 + (buyerLines.length + subLines.length) * LINE_HEIGHT);
+  // Right-aligned PO block
+  doc.setFontSize(8);
+  textRight('PURCHASE ORDER', pageW - margin, 10);
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  textRight(po.poNumber, pageW - margin, 18);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
-  doc.text(`Date: ${formatDate(po.date)}`, pageW - margin, 24);
-  doc.text(`Version: ${po.version}.0`, pageW - margin, 28);
+  textRight(`Date: ${formatDate(po.date)}`, pageW - margin, 24);
+  textRight(`Version: ${po.version}.0`, pageW - margin, 28);
 
   doc.setTextColor(0, 0, 0);
-  y = 42;
+  y = 44;
 
-  // Buyer / Supplier
-  doc.setFontSize(9);
+  // Buyer / Supplier – two columns with wrapping
+  const buyerX = margin;
+  const supplierX = margin + colWidth + 8;
+  doc.setFontSize(10);
   doc.setFont('helvetica', 'bold');
-  doc.text('Buyer', margin, y);
-  doc.text('Supplier', pageW / 2 + 5, y);
+  doc.text('Buyer', buyerX, y);
+  doc.text('Supplier', supplierX, y);
   doc.setFont('helvetica', 'normal');
-  y += 6;
-  doc.text(po.buyerCompany, margin, y);
-  doc.text(po.supplierName || '—', pageW / 2 + 5, y);
-  y += 5;
-  doc.text(po.buyerAddress, margin, y);
-  doc.text(po.supplierAddress || '—', pageW / 2 + 5, y);
-  y += 5;
-  doc.text(`Department: ${po.buyerDepartment}`, margin, y);
-  doc.text(`Contact: ${po.supplierContact || '—'}`, pageW / 2 + 5, y);
-  y += 5;
-  doc.text(`Contact: ${po.buyerContact}`, margin, y);
-  doc.text(`Email: ${po.supplierEmail || '—'}`, pageW / 2 + 5, y);
-  y += 10;
+  doc.setFontSize(9);
+  y += 7;
 
-  // Line items table
+  const buyerBlocks = [
+    po.buyerCompany,
+    po.buyerAddress,
+    `Department: ${po.buyerDepartment}`,
+    `Contact: ${po.buyerContact}`,
+  ];
+  const supplierBlocks = [
+    po.supplierName || '—',
+    po.supplierAddress || '—',
+    `Contact: ${po.supplierContact || '—'}`,
+    `Email: ${po.supplierEmail || '—'}`,
+  ];
+  for (let i = 0; i < Math.max(buyerBlocks.length, supplierBlocks.length); i++) {
+    const bLines = wrapText(buyerBlocks[i] ?? '', colWidth);
+    const sLines = wrapText(supplierBlocks[i] ?? '', colWidth);
+    const lineCount = Math.max(buyerBlocks[i] != null ? bLines.length : 0, supplierBlocks[i] != null ? sLines.length : 0) || 1;
+    if (buyerBlocks[i] != null) doc.text(bLines, buyerX, y);
+    if (supplierBlocks[i] != null) doc.text(sLines, supplierX, y);
+    y += lineCount * LINE_HEIGHT + 2;
+  }
+  y += 8;
+
+  // Line items table – clearer column widths
   const tableHead = [['#', 'Description', 'Qty', 'Unit', 'Unit Price', 'Line Total']];
   const tableBody = po.items.map((item, idx) => [
     String(idx + 1),
@@ -72,18 +104,37 @@ function downloadPOAsPDF(po: PurchaseOrder) {
     body: tableBody,
     foot: [[ '', '', '', '', `TOTAL (${po.currency}):`, formatCurrency(po.total, po.currency) ]],
     theme: 'grid',
-    headStyles: { fillColor: [12, 35, 64], textColor: [255, 255, 255], fontStyle: 'bold' },
-    footStyles: { fillColor: [241, 245, 249], fontStyle: 'bold' },
+    headStyles: { fillColor: [12, 35, 64], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 9 },
+    bodyStyles: { fontSize: 9 },
+    footStyles: { fillColor: [241, 245, 249], fontStyle: 'bold', fontSize: 9 },
     margin: { left: margin, right: margin },
+    columnStyles: {
+      0: { cellWidth: 10 },
+      1: { cellWidth: 55 },
+      2: { cellWidth: 14 },
+      3: { cellWidth: 18 },
+      4: { cellWidth: 28 },
+      5: { cellWidth: 28 },
+    },
   });
-  y = (doc as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 12;
+  y = (doc as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 14;
 
+  // Footer – wrap long lines
   doc.setFontSize(8);
-  doc.text(`Requested by: ${po.requesterName}`, margin, y);
-  doc.text(`Approved by: ${po.approverNames.filter(Boolean).join(', ')}`, margin, y + 5);
-  doc.text(`This PO is issued by ${po.buyerCompany} · ${po.buyerAddress}`, margin, y + 12);
-  doc.text(`Generated: ${formatDateTime(po.createdAt)}`, margin, y + 16);
-  doc.text(`PO ${po.poNumber} is subject to MARS Ambulance Services Standard Terms & Conditions.`, margin, y + 20);
+  const footerW = pageW - 2 * margin;
+  const reqLines = wrapText(`Requested by: ${po.requesterName}`, footerW);
+  doc.text(reqLines, margin, y);
+  y += reqLines.length * LINE_HEIGHT + 2;
+  const approverLines = wrapText(`Approved by: ${po.approverNames.filter(Boolean).join(', ')}`, footerW);
+  doc.text(approverLines, margin, y);
+  y += approverLines.length * LINE_HEIGHT + 2;
+  const issuedLines = wrapText(`This PO is issued by ${po.buyerCompany} · ${po.buyerAddress}`, footerW);
+  doc.text(issuedLines, margin, y);
+  y += issuedLines.length * LINE_HEIGHT + 2;
+  doc.text(`Generated: ${formatDateTime(po.createdAt)}`, margin, y);
+  y += LINE_HEIGHT;
+  const termsLines = wrapText(`PO ${po.poNumber} is subject to ${po.buyerCompany} Standard Terms & Conditions.`, footerW);
+  doc.text(termsLines, margin, y);
 
   doc.save(`${po.poNumber}.pdf`);
 }

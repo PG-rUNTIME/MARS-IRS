@@ -1,11 +1,10 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router';
 import {
-  fetchAuditList,
+  fetchAuditRequisitionsList,
   getAuditExportUrl,
   isApiEnabled as isAuditApiEnabled,
-  type ApiAuditEntry as AuditEntryDto,
-  type Paginated as PaginatedAuditResponse,
+  type ApiAuditRequisitionSummary,
 } from '../api/client';
 import { useApp } from '../context/AppContext';
 import { formatDateTime } from './shared/StatusBadge';
@@ -60,20 +59,8 @@ const ROLE_COLORS: Record<string, string> = {
 
 const PER_PAGE = 25;
 
-function mapDtoToEntry(dto: AuditEntryDto) {
-  return {
-    id: String(dto.id),
-    action: dto.action,
-    userId: dto.user_id_str,
-    userName: dto.user_name,
-    userRole: dto.user_role as UserRole,
-    timestamp: dto.timestamp,
-    details: dto.details,
-    requisitionId: dto.requisition_id ?? undefined,
-    requisitionNumber: dto.requisition_number ?? undefined,
-    requisitionCurrency: dto.requisition_currency ?? undefined,
-  };
-}
+const FILTER_ACTIONS = Object.keys(ACTION_COLORS).sort();
+const FILTER_ROLES = Object.keys(ROLE_COLORS).sort();
 
 export function AuditTrail() {
   const navigate = useNavigate();
@@ -88,7 +75,7 @@ export function AuditTrail() {
   const [dateTo, setDateTo] = useState('');
   const [page, setPage] = useState(1);
 
-  const [data, setData] = useState<PaginatedAuditResponse | null>(null);
+  const [data, setData] = useState<{ count: number; results: ApiAuditRequisitionSummary[] } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -97,7 +84,7 @@ export function AuditTrail() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchAuditList({
+      const res = await fetchAuditRequisitionsList({
         page,
         page_size: PER_PAGE,
         search: search || undefined,
@@ -123,17 +110,13 @@ export function AuditTrail() {
     }
   }, [useApi, loadFromApi]);
 
-  // Fallback: use AppContext when API is not configured (existing behaviour)
-  const fallback = useAppFallback(search, filterAction, filterRole, filterUser, filterRequisition, dateFrom, dateTo, page);
-  const entries = useApi && data ? data.results.map(mapDtoToEntry) : fallback.entries;
+  // Fallback: use AppContext when API is not configured – group by requisition
+  const fallback = useAppFallbackRequisitions(search, filterAction, filterRole, filterUser, filterRequisition, dateFrom, dateTo, page);
+  const rows = useApi && data ? data.results : fallback.rows;
   const totalCount = useApi && data ? data.count : fallback.totalCount;
   const totalPages = useApi && data ? Math.max(1, Math.ceil(data.count / PER_PAGE)) : fallback.totalPages;
-  const filterOptions = useApi && data
-    ? { actions: [...new Set(data.results.map((r) => r.action))].sort(), roles: [...new Set(data.results.map((r) => r.user_role))].sort(), users: [...new Set(data.results.map((r) => r.user_name))].sort() }
-    : fallback.filterOptions;
+  const filterOptions = { actions: FILTER_ACTIONS, roles: FILTER_ROLES, users: fallback.users };
   const showPagination = useApi ? (data != null && data.count > PER_PAGE) : fallback.totalPages > 1;
-  const paginatedEntries = useApi ? entries : fallback.paginatedEntries;
-  const filteredEntriesForExport = useApi ? entries : fallback.filteredEntriesForExport;
   const hasFilters = !!(search || filterAction || filterRole || filterUser || filterRequisition || dateFrom || dateTo);
 
   const clearFilters = () => {
@@ -149,15 +132,15 @@ export function AuditTrail() {
 
   const getActionColor = (action: string) => ACTION_COLORS[action] ?? 'bg-slate-100 text-slate-600';
 
-  const auditHeaders = ['Timestamp', 'Action', 'User', 'Role', 'Requisition Reference', 'Details'];
-  const rowsFromEntries = (list: typeof paginatedEntries) =>
-    list.map((e) => [
-      formatDateTime(e.timestamp),
-      e.action,
-      e.userName,
-      e.userRole,
-      e.requisitionNumber ? `${e.requisitionNumber} (${e.requisitionCurrency ?? 'USD'})` : '—',
-      e.details,
+  const summaryHeaders = ['Reference', 'Latest activity', 'Date', 'By', 'Role', 'Actions'];
+  const rowsForExport = (list: ApiAuditRequisitionSummary[]) =>
+    list.map((r) => [
+      r.requisition_number ? `${r.requisition_number} (${r.requisition_currency ?? 'USD'})` : '—',
+      r.latest_action,
+      formatDateTime(r.latest_timestamp),
+      r.latest_user_name,
+      r.latest_user_role,
+      String(r.action_count),
     ]);
 
   const handleExportExcel = () => {
@@ -175,32 +158,31 @@ export function AuditTrail() {
         '_blank'
       );
     } else {
-      exportToExcel(auditHeaders, rowsFromEntries(filteredEntriesForExport), 'audit_trail');
+      exportToExcel(summaryHeaders, rowsForExport(rows), 'audit_trail_requisitions');
     }
   };
 
   const handleExportPDF = () => {
-    const list = useApi ? entries : filteredEntriesForExport;
-    if (list.length === 0) {
-      alert('No audit entries to export.');
+    if (rows.length === 0) {
+      alert('No requisitions to export.');
       return;
     }
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
     doc.setFontSize(14);
-    doc.text('Audit Trail', 14, 16);
+    doc.text('Audit Trail (by requisition)', 14, 16);
     doc.setFontSize(9);
-    doc.text(`Generated: ${new Date().toLocaleString()} | ${list.length} entries`, 14, 22);
-    const tableBody = list.map((e) => [
-      formatDateTime(e.timestamp),
-      e.action,
-      e.userName,
-      e.userRole,
-      e.requisitionNumber ? `${e.requisitionNumber} (${e.requisitionCurrency ?? 'USD'})` : '—',
-      e.details,
+    doc.text(`Generated: ${new Date().toLocaleString()} | ${rows.length} requisitions`, 14, 22);
+    const tableBody = rows.map((r) => [
+      r.requisition_number ? `${r.requisition_number} (${r.requisition_currency ?? 'USD'})` : '—',
+      r.latest_action,
+      formatDateTime(r.latest_timestamp),
+      r.latest_user_name,
+      r.latest_user_role,
+      String(r.action_count),
     ]);
     autoTable(doc, {
       startY: 26,
-      head: [auditHeaders],
+      head: [summaryHeaders],
       body: tableBody,
       theme: 'grid',
       headStyles: { fillColor: [12, 35, 64], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
@@ -211,20 +193,15 @@ export function AuditTrail() {
   };
 
   const handleExportWord = () => {
-    const list = useApi ? entries : filteredEntriesForExport;
-    if (list.length === 0) {
-      alert('No audit entries to export.');
+    if (rows.length === 0) {
+      alert('No requisitions to export.');
       return;
     }
-    exportToWord('Audit Trail', auditHeaders, rowsFromEntries(list), 'audit_trail');
+    exportToWord('Audit Trail (by requisition)', summaryHeaders, rowsForExport(rows), 'audit_trail_requisitions');
   };
 
-  const handleReqRefClick = (entry: { requisitionId?: string; requisitionNumber?: string }) => {
-    if (entry.requisitionNumber) {
-      setFilterRequisition(entry.requisitionNumber);
-      setPage(1);
-    }
-    if (entry.requisitionId) navigate(`/requisitions/${entry.requisitionId}`);
+  const handleRowClick = (row: ApiAuditRequisitionSummary) => {
+    if (row.requisition_id) navigate(`/requisitions/${String(row.requisition_id)}`);
   };
 
   return (
@@ -235,7 +212,7 @@ export function AuditTrail() {
           <p className="text-slate-500 text-sm mt-0.5">Immutable record of all system actions and user activities</p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
-          <span className="text-slate-500 text-sm">{totalCount} entries</span>
+          <span className="text-slate-500 text-sm">{totalCount} requisition{totalCount !== 1 ? 's' : ''}</span>
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={handleExportExcel} className="gap-2">
               <FileSpreadsheet className="size-4" />
@@ -257,7 +234,7 @@ export function AuditTrail() {
         <Info className="size-4" />
         <AlertTitle>Access Controlled</AlertTitle>
         <AlertDescription>
-          This audit trail is accessible only to the Financial Controller and authorised Auditor/Compliance personnel. All entries are timestamped and changes are traceable.
+          This audit trail shows one row per requisition. Click a row to open the full requisition and see who did what and when in the activity log.
         </AlertDescription>
       </Alert>
 
@@ -339,51 +316,40 @@ export function AuditTrail() {
       <Card>
         {loading ? (
           <CardContent className="py-16 text-center text-slate-500">Loading audit log…</CardContent>
-        ) : paginatedEntries.length === 0 ? (
+        ) : rows.length === 0 ? (
           <CardContent className="py-16 text-center">
             <div className="text-4xl mb-4">🛡️</div>
-            <p className="text-slate-500 font-medium">No audit entries match your filters</p>
+            <p className="text-slate-500 font-medium">No requisitions match your filters</p>
           </CardContent>
         ) : (
           <>
             <Table>
               <TableHeader>
                 <TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
-                  {['Timestamp', 'Action', 'User', 'Role', 'Reference', 'Details'].map((h) => (
+                  {['Reference', 'Latest activity', 'Date', 'By', 'Role', 'Actions'].map((h) => (
                     <TableHead key={h} className="text-xs font-medium text-slate-500 uppercase tracking-wide">{h}</TableHead>
                   ))}
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {paginatedEntries.map((entry) => (
-                  <TableRow key={entry.id} className="hover:bg-slate-50/50">
-                    <TableCell className="text-xs text-slate-600 whitespace-nowrap">{formatDateTime(entry.timestamp)}</TableCell>
+                {rows.map((row) => (
+                  <TableRow
+                    key={row.requisition_id}
+                    className="hover:bg-mars-red-muted/30 cursor-pointer transition-colors"
+                    onClick={() => handleRowClick(row)}
+                  >
+                    <TableCell className="font-mono text-sm text-mars-red font-medium">
+                      {row.requisition_number ? `${row.requisition_number} (${row.requisition_currency ?? 'USD'})` : '—'}
+                    </TableCell>
                     <TableCell>
-                      <span className={`inline-flex text-xs px-2 py-1 rounded-full font-medium ${getActionColor(entry.action)}`}>{entry.action}</span>
+                      <span className={`inline-flex text-xs px-2 py-1 rounded-full font-medium ${getActionColor(row.latest_action)}`}>{row.latest_action}</span>
                     </TableCell>
-                    <TableCell className="text-sm text-slate-800">{entry.userName}</TableCell>
+                    <TableCell className="text-xs text-slate-600 whitespace-nowrap">{formatDateTime(row.latest_timestamp)}</TableCell>
+                    <TableCell className="text-sm text-slate-800">{row.latest_user_name}</TableCell>
                     <TableCell>
-                      <span className={`text-xs font-medium ${ROLE_COLORS[entry.userRole] ?? 'text-slate-600'}`}>{entry.userRole}</span>
+                      <span className={`text-xs font-medium ${ROLE_COLORS[row.latest_user_role] ?? 'text-slate-600'}`}>{row.latest_user_role}</span>
                     </TableCell>
-                    <TableCell>
-                      {entry.requisitionNumber ? (
-                        <span className="flex items-center gap-1.5">
-                          <Button
-                            variant="link"
-                            className="text-xs font-mono text-mars-red hover:underline p-0 h-auto"
-                            onClick={() => handleReqRefClick(entry)}
-                          >
-                            {entry.requisitionNumber}
-                          </Button>
-                          <span className="text-slate-500 text-xs font-medium">({entry.requisitionCurrency ?? 'USD'})</span>
-                        </span>
-                      ) : (
-                        <span className="text-slate-400 text-xs">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-sm text-slate-600 max-w-[280px]">
-                      <span className="truncate block" title={entry.details}>{entry.details}</span>
-                    </TableCell>
+                    <TableCell className="text-sm text-slate-600">{row.action_count}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -436,8 +402,8 @@ export function AuditTrail() {
   );
 }
 
-/** Fallback when VITE_API_BASE is not set: use AppContext and client-side filtering/pagination. */
-function useAppFallback(
+/** Fallback when API is not set: group audit entries by requisition, one row per req. */
+function useAppFallbackRequisitions(
   search: string,
   filterAction: string,
   filterRole: UserRole | '',
@@ -456,15 +422,9 @@ function useAppFallback(
     return [...auditLog, ...reqLogs].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   }, [auditLog, requisitions]);
 
-  const allLogsWithCurrency = useMemo(() => {
-    return allLogs.map((e) => ({
-      ...e,
-      requisitionCurrency: e.requisitionId ? requisitions.find((r) => r.id === e.requisitionId)?.currency : undefined,
-    }));
-  }, [allLogs, requisitions]);
-
   const filtered = useMemo(() => {
-    return allLogsWithCurrency.filter((e) => {
+    return allLogs.filter((e) => {
+      if (!e.requisitionId) return false;
       if (search && !e.details.toLowerCase().includes(search.toLowerCase()) && !e.userName.toLowerCase().includes(search.toLowerCase()) && !(e.requisitionNumber?.toLowerCase().includes(search.toLowerCase()))) return false;
       if (filterAction && e.action !== filterAction) return false;
       if (filterRole && e.userRole !== filterRole) return false;
@@ -486,20 +446,41 @@ function useAppFallback(
       }
       return true;
     });
-  }, [allLogsWithCurrency, search, filterAction, filterRole, filterUser, filterRequisition, dateFrom, dateTo]);
+  }, [allLogs, search, filterAction, filterRole, filterUser, filterRequisition, dateFrom, dateTo]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PER_PAGE));
-  const paginated = filtered.slice((page - 1) * PER_PAGE, page * PER_PAGE);
-  const uniqueActions = [...new Set(allLogsWithCurrency.map((e) => e.action))].sort();
-  const uniqueRoles = [...new Set(allLogsWithCurrency.map((e) => e.userRole))].sort();
-  const uniqueUsers = [...new Set(allLogsWithCurrency.map((e) => e.userName))].sort();
+  const rows: ApiAuditRequisitionSummary[] = useMemo(() => {
+    const byReq = new Map<string, typeof filtered>();
+    for (const e of filtered) {
+      const id = e.requisitionId!;
+      if (!byReq.has(id)) byReq.set(id, []);
+      byReq.get(id)!.push(e);
+    }
+    const reqs = Array.from(byReq.entries()).map(([reqId, entries]) => {
+      const latest = entries[0];
+      const req = requisitions.find((r) => r.id === reqId);
+      return {
+        requisition_id: Number(reqId),
+        requisition_number: latest.requisitionNumber ?? req?.reqNumber ?? null,
+        requisition_currency: req?.currency ?? latest.requisitionCurrency ?? null,
+        latest_timestamp: latest.timestamp,
+        latest_action: latest.action,
+        latest_user_name: latest.userName,
+        latest_user_role: latest.userRole,
+        action_count: entries.length,
+      };
+    });
+    reqs.sort((a, b) => new Date(b.latest_timestamp).getTime() - new Date(a.latest_timestamp).getTime());
+    return reqs;
+  }, [filtered, requisitions]);
+
+  const totalPages = Math.max(1, Math.ceil(rows.length / PER_PAGE));
+  const paginatedRows = rows.slice((page - 1) * PER_PAGE, page * PER_PAGE);
+  const uniqueUsers = [...new Set(allLogs.map((e) => e.userName))].sort();
 
   return {
-    entries: allLogsWithCurrency,
-    totalCount: filtered.length,
+    rows: paginatedRows,
+    totalCount: rows.length,
     totalPages,
-    paginatedEntries: paginated,
-    filteredEntriesForExport: filtered,
-    filterOptions: { actions: uniqueActions, roles: uniqueRoles, users: uniqueUsers },
+    users: uniqueUsers,
   };
 }

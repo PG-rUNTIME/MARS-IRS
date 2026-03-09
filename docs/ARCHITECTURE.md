@@ -109,7 +109,7 @@ sequenceDiagram
   B->>D: Query
   D-->>B: Rows
   B-->>F: JSON
-  F-->>U: Render
+  F-->>U: UI
 ```
 
 ---
@@ -132,25 +132,25 @@ stateDiagram-v2
 
 ---
 
-## Deployment (e.g. Render)
+## Deployment (Docker)
 
 ```mermaid
 flowchart TB
-  subgraph Render["Render"]
-    subgraph Static["Static Site"]
-      FE["Frontend\nbuild: npm run build\npublish: dist"]
+  subgraph Docker["Docker"]
+    subgraph Frontend["Frontend container"]
+      FE["Frontend\nnginx serves dist"]
     end
-    subgraph Web["Web Service"]
-      BE["Backend (Docker)\nbackend/Dockerfile"]
+    subgraph Backend["Backend container"]
+      BE["Backend\nbackend/Dockerfile"]
     end
-    subgraph DB["PostgreSQL"]
+    subgraph DB["PostgreSQL container"]
       PG[("DB")]
     end
   end
 
-  User["Users"] -->|HTTPS| FE
-  FE -->|VITE_API_BASE| BE
-  BE -->|Internal URL| PG
+  User["Users"] --> FE
+  FE -->|/api proxied or VITE_API_BASE| BE
+  BE --> PG
 ```
 
 ---
@@ -188,4 +188,4 @@ flowchart TB
 - **Frontend:** Single-page app (React + Vite). Serves static assets; state in memory (AppContext) or via backend when `VITE_API_BASE` is set (audit, DB health).
 - **Backend:** Django HTTP API for auth, requisitions, POs, audit, DB health/backups. Writes to PostgreSQL.
 - **Database:** PostgreSQL; holds users, requisitions, approval chains, POs, audit log, attachments/POP metadata (and optionally file storage).
-- **Deployment:** Frontend as static site; backend as web service (e.g. Docker on Render); PostgreSQL as managed DB. Frontend build-time env `VITE_API_BASE` points to backend URL.
+- **Deployment:** Docker: frontend (nginx), backend (Django), PostgreSQL. Frontend build-time env `VITE_API_BASE` points to backend URL (empty when same-origin proxy).

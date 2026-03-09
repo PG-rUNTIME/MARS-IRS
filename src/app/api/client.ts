@@ -398,6 +398,33 @@ export function fetchAuditList(params: AuditListParams = {}): Promise<Paginated<
   return api(`/audit/${q ? '?' + q : ''}`);
 }
 
+/** One row per requisition (latest activity + count). For audit trail summary view. */
+export interface ApiAuditRequisitionSummary {
+  requisition_id: number;
+  requisition_number: string | null;
+  requisition_currency: string | null;
+  latest_timestamp: string;
+  latest_action: string;
+  latest_user_name: string;
+  latest_user_role: string;
+  action_count: number;
+}
+
+export function fetchAuditRequisitionsList(params: AuditListParams = {}): Promise<Paginated<ApiAuditRequisitionSummary>> {
+  const url = new URLSearchParams();
+  if (params.page != null) url.set('page', String(params.page));
+  if (params.page_size != null) url.set('page_size', String(params.page_size));
+  if (params.search) url.set('search', params.search);
+  if (params.action) url.set('action', params.action);
+  if (params.role) url.set('role', params.role);
+  if (params.user) url.set('user', params.user);
+  if (params.requisition_id) url.set('requisition_id', params.requisition_id);
+  if (params.date_from) url.set('date_from', params.date_from);
+  if (params.date_to) url.set('date_to', params.date_to);
+  const q = url.toString();
+  return api(`/audit/requisitions/${q ? '?' + q : ''}`);
+}
+
 export function getAuditExportUrl(params: Omit<AuditListParams, 'page' | 'page_size'> = {}): string {
   const url = new URLSearchParams();
   if (params.search) url.set('search', params.search);
