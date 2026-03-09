@@ -1,4 +1,5 @@
 import csv
+from decimal import Decimal
 from django.core.mail import get_connection
 from django.db import transaction
 from django.db.models import Q
@@ -19,6 +20,7 @@ from .serializers import (
     RequisitionWriteSerializer, ApprovalStepSerializer, ReqCommentSerializer,
     AttachmentSerializer, POItemSerializer, PurchaseOrderSerializer,
     AppNotificationSerializer, DelegationRecordSerializer, AuditEntrySerializer,
+    check_password,
 )
 from .smtp_config import get_smtp_config, get_smtp_config_public, save_smtp_config
 
@@ -42,11 +44,24 @@ def login(request):
         user = User.objects.prefetch_related('roles').get(email__iexact=email)
     except User.DoesNotExist:
         return Response({'error': 'Invalid email or password.'}, status=401)
-    if user.password != password:
+    if not check_password(password, user.password):
         return Response({'error': 'Invalid email or password.'}, status=401)
     if not user.active:
         return Response({'error': 'Your account has been deactivated. Please contact the administrator.'}, status=403)
     return Response(UserSerializer(user).data)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def verify_password(request):
+    """Verify a user's current password without changing it. Used by change-password flow."""
+    user_id = request.data.get('user_id')
+    password = request.data.get('password', '')
+    try:
+        user = User.objects.get(pk=user_id)
+    except (User.DoesNotExist, TypeError, ValueError):
+        return Response({'valid': False}, status=400)
+    return Response({'valid': check_password(password, user.password)})
 
 
 # ─── Users ────────────────────────────────────────────────────────────────────
@@ -89,7 +104,7 @@ def user_detail(request, pk):
 @permission_classes([AllowAny])
 def requisition_list(request):
     if request.method == 'GET':
-        qs = Requisition.objects.select_related('requester').all()
+        qs = Requisition.objects.select_related('requester').prefetch_related('approval_chain').all()
         status_filter = request.query_params.get('status')
         if status_filter:
             qs = qs.filter(status=status_filter)
@@ -107,6 +122,8 @@ def requisition_list(request):
     data = request.data
     write_ser = RequisitionWriteSerializer(data=data)
     if not write_ser.is_valid():
+        import logging
+        logging.getLogger('django').error('RequisitionCreate 400: %s | data keys: %s', write_ser.errors, list(data.keys()))
         return Response(write_ser.errors, status=400)
 
     with transaction.atomic():
@@ -122,16 +139,54 @@ def requisition_list(request):
                 status=step_data.get('status', 'Pending'),
             )
 
-        # Line items
+        # Line items (coerce types for JSON payload)
         for item_data in data.get('items', []):
+            qty = item_data.get('quantity', 1)
+            try:
+                qty = int(qty) if qty is not None else 1
+            except (TypeError, ValueError):
+                qty = 1
+            up = item_data.get('unit_price', 0)
+            lt = item_data.get('line_total', 0)
+            try:
+                up = Decimal(str(up)) if up is not None else Decimal('0')
+            except (TypeError, ValueError, Exception):
+                up = Decimal('0')
+            try:
+                lt = Decimal(str(lt)) if lt is not None else Decimal('0')
+            except (TypeError, ValueError, Exception):
+                lt = Decimal('0')
             POItem.objects.create(
                 requisition=req,
                 description=item_data.get('description', ''),
-                quantity=item_data.get('quantity', 1),
-                unit=item_data.get('unit', 'Unit'),
-                unit_price=item_data.get('unit_price', 0),
-                line_total=item_data.get('line_total', 0),
+                quantity=qty,
+                unit=item_data.get('unit') or 'Unit',
+                unit_price=up,
+                line_total=lt,
             )
+
+        # Persist supplier documents as proper Attachment records
+        requester_name = req.requester.name if req.requester else 'Requester'
+        for idx, supplier in enumerate(req.suppliers_json or []):
+            label = f"Supplier {idx + 1} ({supplier.get('name', '')})"
+            doc_slots = [
+                ('quotationDataUrl', 'quotationName', 'quotationSize', 'Quotation'),
+                ('taxClearanceDataUrl', 'taxClearanceName', 'taxClearanceSize', 'Tax Clearance'),
+                ('vatCertDataUrl', 'vatCertName', 'vatCertSize', 'VAT Certificate'),
+            ]
+            for url_key, name_key, size_key, doc_label in doc_slots:
+                data_url = supplier.get(url_key)
+                if not data_url:
+                    continue
+                Attachment.objects.create(
+                    requisition=req,
+                    name=f"{label} – {doc_label}",
+                    type='PDF',
+                    size=supplier.get(size_key) or '—',
+                    uploaded_by=requester_name,
+                    data_url=data_url,
+                    is_proof_of_payment=False,
+                )
 
         # Audit
         _log_audit(req, data.get('actor_user_id'), data.get('actor_user_name', ''),
@@ -185,17 +240,32 @@ def requisition_detail(request, pk):
                         delegated_to_name=step_data.get('delegated_to_name', ''),
                     )
 
-            # Replace items if provided
+            # Replace items if provided (coerce types for JSON payload)
             if 'items' in data:
                 req.items.all().delete()
                 for item_data in data['items']:
+                    qty = item_data.get('quantity', 1)
+                    try:
+                        qty = int(qty) if qty is not None else 1
+                    except (TypeError, ValueError):
+                        qty = 1
+                    up = item_data.get('unit_price', 0)
+                    lt = item_data.get('line_total', 0)
+                    try:
+                        up = Decimal(str(up)) if up is not None else Decimal('0')
+                    except (TypeError, ValueError, Exception):
+                        up = Decimal('0')
+                    try:
+                        lt = Decimal(str(lt)) if lt is not None else Decimal('0')
+                    except (TypeError, ValueError, Exception):
+                        lt = Decimal('0')
                     POItem.objects.create(
                         requisition=req,
                         description=item_data.get('description', ''),
-                        quantity=item_data.get('quantity', 1),
-                        unit=item_data.get('unit', 'Unit'),
-                        unit_price=item_data.get('unit_price', 0),
-                        line_total=item_data.get('line_total', 0),
+                        quantity=qty,
+                        unit=item_data.get('unit') or 'Unit',
+                        unit_price=up,
+                        line_total=lt,
                     )
 
             # Audit

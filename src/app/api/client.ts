@@ -1,13 +1,13 @@
 /**
  * API client for the Django backend.
- * Set VITE_API_BASE in .env to point at the backend (e.g. https://your-app.onrender.com).
+ * nginx proxies /api/ to the backend — no absolute URL needed.
+ * For local dev without Docker, set VITE_API_BASE in .env.local (e.g. http://localhost:8001).
  */
-const API_BASE = typeof import.meta.env?.VITE_API_BASE === 'string'
-  ? import.meta.env.VITE_API_BASE.replace(/\/$/, '')
-  : '';
+const API_BASE: string = ((import.meta as unknown as Record<string, Record<string, string>>).env?.VITE_API_BASE ?? '').replace(/\/$/, '');
 
 export function getApiBase(): string { return API_BASE; }
-export function isApiEnabled(): boolean { return API_BASE.length > 0; }
+// Always enabled — nginx proxy handles routing in Docker; VITE_API_BASE handles local dev
+export function isApiEnabled(): boolean { return true; }
 
 async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(`${API_BASE}/api${path}`, {
@@ -36,7 +36,6 @@ export interface ApiUser {
   id: number;
   name: string;
   email: string;
-  password: string;
   department: string;
   active: boolean;
   joined_date: string | null;
@@ -128,6 +127,13 @@ export interface ApiRequisition {
   supplier_phone: string;
   supplier_address: string;
   supplier_contact: string;
+  supplier_bank_name: string;
+  supplier_bank_account_name: string;
+  supplier_bank_account_number: string;
+  supplier_bank_branch: string;
+  suppliers_json: unknown[] | null;
+  preferred_supplier_index: number | null;
+  preferred_supplier_justification: string;
   vehicle_reg: string;
   fuel_type: string;
   fuel_quantity: string | null;
@@ -207,6 +213,10 @@ export function loginApi(email: string, password: string): Promise<ApiUser> {
   return api('/auth/login/', { method: 'POST', body: JSON.stringify({ email, password }) });
 }
 
+export function verifyPassword(userId: string, password: string): Promise<{ valid: boolean }> {
+  return api('/auth/verify-password/', { method: 'POST', body: JSON.stringify({ user_id: userId, password }) });
+}
+
 // ─── Users ────────────────────────────────────────────────────────────────────
 
 export function fetchUsers(): Promise<ApiUser[]> {
@@ -250,6 +260,13 @@ export interface CreateRequisitionPayload {
   supplier_phone?: string;
   supplier_address?: string;
   supplier_contact?: string;
+  supplier_bank_name?: string;
+  supplier_bank_account_name?: string;
+  supplier_bank_account_number?: string;
+  supplier_bank_branch?: string;
+  suppliers_json?: unknown[] | null;
+  preferred_supplier_index?: number | null;
+  preferred_supplier_justification?: string;
   vehicle_reg?: string;
   fuel_type?: string;
   fuel_quantity?: number | null;
@@ -412,6 +429,22 @@ export function createBackup(name?: string): Promise<BackupCreateResponse> {
 }
 export function restoreBackup(filename: string): Promise<{ status: string; message?: string; error?: string }> {
   return api('/database/backups/restore/', { method: 'POST', body: JSON.stringify({ filename }) });
+}
+export function getBackupDownloadUrl(filename: string): string {
+  return `${API_BASE}/api/database/backups/${encodeURIComponent(filename)}/download/`;
+}
+export function uploadAndRestoreBackup(file: File): Promise<{ status: string; message?: string; error?: string }> {
+  const form = new FormData();
+  form.append('file', file);
+  return fetch(`${API_BASE}/api/database/backups/upload-restore/`, {
+    method: 'POST',
+    credentials: 'include',
+    body: form,
+  }).then(async (res) => {
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Upload failed (${res.status})`);
+    return data;
+  });
 }
 
 // ─── SMTP ─────────────────────────────────────────────────────────────────────

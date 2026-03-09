@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
-  getApiBase,
   fetchDatabaseHealth,
   fetchBackupList,
   createBackup,
@@ -35,13 +34,7 @@ export function DatabaseHealthBackup() {
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [restoreConfirm, setRestoreConfirm] = useState<string | null>(null);
 
-  const apiEnabled = getApiBase().length > 0;
-
   const loadHealth = useCallback(async () => {
-    if (!apiEnabled) {
-      setLoadingHealth(false);
-      return;
-    }
     setLoadingHealth(true);
     try {
       const data = await fetchDatabaseHealth();
@@ -51,13 +44,9 @@ export function DatabaseHealthBackup() {
     } finally {
       setLoadingHealth(false);
     }
-  }, [apiEnabled]);
+  }, []);
 
   const loadBackups = useCallback(async () => {
-    if (!apiEnabled) {
-      setLoadingBackups(false);
-      return;
-    }
     setLoadingBackups(true);
     try {
       const data = await fetchBackupList();
@@ -68,7 +57,7 @@ export function DatabaseHealthBackup() {
     } finally {
       setLoadingBackups(false);
     }
-  }, [apiEnabled]);
+  }, []);
 
   useEffect(() => {
     loadHealth();
@@ -79,7 +68,6 @@ export function DatabaseHealthBackup() {
   }, [loadBackups]);
 
   const handleCreateBackup = async () => {
-    if (!apiEnabled) return;
     setCreating(true);
     setMessage(null);
     try {
@@ -95,7 +83,6 @@ export function DatabaseHealthBackup() {
   };
 
   const handleRestore = async (filename: string) => {
-    if (!apiEnabled) return;
     setRestoring(filename);
     setMessage(null);
     setRestoreConfirm(null);
@@ -108,20 +95,6 @@ export function DatabaseHealthBackup() {
       setRestoring(null);
     }
   };
-
-  if (!apiEnabled) {
-    return (
-      <div className="space-y-5">
-        <div>
-          <h1 className="text-foreground">Database Health & Backup</h1>
-          <p className="text-muted-foreground text-sm">Administrator only</p>
-        </div>
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-5 text-amber-800 text-sm">
-          This feature requires the backend API to be configured. Set <code className="bg-amber-100 px-1 rounded">VITE_API_BASE</code> and run the backend to view database health and manage backups.
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-6">

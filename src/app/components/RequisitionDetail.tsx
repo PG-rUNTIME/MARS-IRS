@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import { useApp } from '../context/AppContext';
@@ -46,7 +46,7 @@ const STEP_ICONS: Record<string, React.ReactNode> = {
 export function RequisitionDetail() {
   const { id } = useParams<{ id: string }>();
   const { currentUser } = useAuth();
-  const { requisitions, purchaseOrders, approveStep, rejectRequisition, returnRejectedToDraft, cancelRequisition, addComment, uploadProofOfPayment, submitRequisition } = useApp();
+  const { requisitions, purchaseOrders, approveStep, rejectRequisition, returnRejectedToDraft, cancelRequisition, addComment, uploadProofOfPayment, submitRequisition, loadRequisitionDetail } = useApp();
   const navigate = useNavigate();
 
   const [approveComment, setApproveComment] = useState('');
@@ -58,6 +58,11 @@ export function RequisitionDetail() {
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [loading, setLoading] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // Load full detail (attachments, comments, etc.) when viewing this requisition so approvers see documents before approving
+  useEffect(() => {
+    if (id) void loadRequisitionDetail(id);
+  }, [id]);
 
   const req = requisitions.find((r) => r.id === id);
 

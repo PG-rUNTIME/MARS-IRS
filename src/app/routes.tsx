@@ -16,7 +16,10 @@ import { useAuth } from './context/AuthContext';
 // Role guard: user must have at least one of the allowed roles (multi-role aware)
 function RequireRole({ roles, redirectTo = '/dashboard', children }: { roles?: string[]; redirectTo?: string; children: React.ReactNode }) {
   const { currentUser } = useAuth();
-  if (!roles || !currentUser) return <>{children}</>;
+  // If currentUser is null, don't render or redirect — just show nothing.
+  // This handles transient null (e.g. file picker re-render) without navigating away.
+  if (!currentUser) return null;
+  if (!roles) return <>{children}</>;
   const hasAccess = currentUser.roles.some((r) => roles.includes(r));
   if (hasAccess) return <>{children}</>;
   return <Navigate to={redirectTo} replace />;

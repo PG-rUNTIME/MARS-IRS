@@ -5,6 +5,7 @@ import { useApp } from '../context/AppContext';
 import type { UserRole, User } from '../data/types';
 import { hasSectionAccess, getPrimaryRole } from '../data/roleCapabilities';
 import { MarsLogo } from './shared/MarsLogo';
+import { verifyPassword } from '../api/client';
 
 const PASSWORD_EXPIRY_DAYS = 30;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -38,14 +39,10 @@ function ChangePasswordModal({
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError('');
     if (!currentUser) return;
-    if (currentPassword !== currentUser.password) {
-      setError('Current password is incorrect.');
-      return;
-    }
     if (newPassword.length < 6) {
       setError('New password must be at least 6 characters.');
       return;
@@ -55,14 +52,27 @@ function ChangePasswordModal({
       return;
     }
     setSaving(true);
-    await updateUser(currentUser.id, {
-      password: newPassword,
-      ...(required && { mustChangePassword: false }),
-      passwordChangedAt: new Date().toISOString().slice(0, 10),
-    });
-    setSaving(false);
-    onSuccess();
-    onClose();
+    try {
+      if (!required) {
+        const { valid } = await verifyPassword(currentUser.id, currentPassword);
+        if (!valid) {
+          setError('Current password is incorrect.');
+          setSaving(false);
+          return;
+        }
+      }
+      await updateUser(currentUser.id, {
+        password: newPassword,
+        ...(required && { mustChangePassword: false }),
+        passwordChangedAt: new Date().toISOString().slice(0, 10),
+      });
+      onSuccess();
+      onClose();
+    } catch {
+      setError('Failed to update password. Please try again.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const requiredMessage =
@@ -88,17 +98,18 @@ function ChangePasswordModal({
           {error && (
             <div className="bg-mars-red-muted border border-mars-red/30 rounded-lg px-3 py-2 text-mars-red-dark text-sm">{error}</div>
           )}
-          <div>
-            <label className="block text-slate-700 text-sm mb-1">Current password</label>
-            <input
-              type="password"
-              value={currentPassword}
-              onChange={(e) => setCurrentPassword(e.target.value)}
-              placeholder={required ? "Default password (e.g. mars2026)" : undefined}
-              className="w-full px-3 py-2 border border-border rounded-lg text-sm focus:outline-none focus:border-mars-red"
-              required
-            />
-          </div>
+          {!required && (
+            <div>
+              <label className="block text-slate-700 text-sm mb-1">Current password</label>
+              <input
+                type="password"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                className="w-full px-3 py-2 border border-border rounded-lg text-sm focus:outline-none focus:border-mars-red"
+                required
+              />
+            </div>
+          )}
           <div>
             <label className="block text-slate-700 text-sm mb-1">New password</label>
             <input
@@ -329,9 +340,9 @@ export function Layout({ onLogout }: { onLogout: () => void }) {
   );
 
   return (
-    <div className="flex h-screen overflow-hidden bg-muted">
-      {/* Desktop Sidebar */}
-      <div className="hidden lg:flex w-60 shrink-0 flex-col bg-sidebar print:hidden">
+    <div className="flex h-full overflow-hidden bg-slate-100">
+      {/* Desktop Sidebar — fixed so it never moves when main content scrolls or reflows (e.g. file upload) */}
+      <div className="hidden lg:flex fixed left-0 top-0 bottom-0 w-60 flex-col bg-sidebar print:hidden overflow-hidden z-30">
         {sidebar}
       </div>
 
@@ -345,8 +356,8 @@ export function Layout({ onLogout }: { onLogout: () => void }) {
         </div>
       )}
 
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      {/* Main Content — ml-60 on desktop to sit beside fixed sidebar */}
+      <div className="flex-1 flex flex-col overflow-hidden lg:ml-60 min-w-0">
         {/* Top Bar */}
         <header className="bg-white border-b border-slate-200 px-6 py-3.5 flex items-center justify-between shrink-0 print:hidden">
           <button className="lg:hidden p-1 text-slate-600 hover:text-slate-800" onClick={() => setSidebarOpen(true)}>
@@ -374,8 +385,8 @@ export function Layout({ onLogout }: { onLogout: () => void }) {
           </div>
         </header>
 
-        {/* Page Content */}
-        <main className="flex-1 overflow-y-auto p-6">
+        {/* Page Content — single scroll container: min-h-0 lets flex child shrink so overflow-y-auto works; stays scrollable after file upload/reflow */}
+        <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-6" style={{ WebkitOverflowScrolling: 'touch' } as React.CSSProperties}>
           <Outlet />
         </main>
       </div>

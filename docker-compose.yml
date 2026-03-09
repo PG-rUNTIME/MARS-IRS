@@ -40,7 +40,8 @@ services:
       context: .
       dockerfile: Dockerfile.frontend
       args:
-        VITE_API_BASE: http://localhost:8001
+        # Empty = use relative /api/ so nginx proxies to backend (same origin, no CORS)
+        VITE_API_BASE: ""
     ports:
       - "5174:80"
     depends_on:

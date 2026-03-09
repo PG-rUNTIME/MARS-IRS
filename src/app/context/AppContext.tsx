@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import type {
   Requisition, PurchaseOrder, AppNotification, AuditEntry, User,
-  RequisitionType, UserRole, ApprovalStep, POItem, Attachment,
+  RequisitionType, UserRole, ApprovalStep, POItem, Attachment, SupplierEntry,
 } from '../data/types';
 import { getPrimaryRole } from '../data/roleCapabilities';
 import {
@@ -25,7 +25,6 @@ function mapUser(u: ApiUser): User {
     id: String(u.id),
     name: u.name,
     email: u.email,
-    password: u.password,
     roles: u.roles as UserRole[],
     department: u.department,
     active: u.active,
@@ -107,6 +106,13 @@ function mapRequisition(r: ApiRequisition): Requisition {
     supplierPhone: r.supplier_phone || undefined,
     supplierAddress: r.supplier_address || undefined,
     supplierContact: r.supplier_contact || undefined,
+    supplierBankName: r.supplier_bank_name || undefined,
+    supplierBankAccountName: r.supplier_bank_account_name || undefined,
+    supplierBankAccountNumber: r.supplier_bank_account_number || undefined,
+    supplierBankBranch: r.supplier_bank_branch || undefined,
+    suppliers: r.suppliers_json ? (r.suppliers_json as SupplierEntry[]) : undefined,
+    preferredSupplierIndex: r.preferred_supplier_index ?? undefined,
+    preferredSupplierJustification: r.preferred_supplier_justification || undefined,
     vehicleReg: r.vehicle_reg || undefined,
     fuelType: r.fuel_type || undefined,
     fuelQuantity: r.fuel_quantity != null ? Number(r.fuel_quantity) : undefined,
@@ -203,6 +209,8 @@ interface AppContextValue {
   users: User[];
   loading: boolean;
   reload: () => Promise<void>;
+  /** Load full requisition detail (attachments, comments, etc.) for the detail page. */
+  loadRequisitionDetail: (id: string) => Promise<void>;
   createRequisition: (data: Partial<Requisition>, currentUser: User) => Promise<string>;
   updateRequisition: (id: string, data: Partial<Requisition>, currentUser: User) => Promise<void>;
   submitRequisition: (id: string, currentUser: User) => Promise<void>;
@@ -217,9 +225,9 @@ interface AppContextValue {
   generatePO: (reqId: string, currentUser: User) => Promise<string | null>;
   markNotificationRead: (id: string) => Promise<void>;
   markAllRead: (userId: string) => Promise<void>;
-  updateUser: (id: string, data: Partial<User>) => Promise<void>;
+  updateUser: (id: string, data: Partial<User> & { password?: string }) => Promise<void>;
   toggleUserActive: (id: string) => Promise<void>;
-  addUser: (data: Omit<User, 'id'>) => Promise<void>;
+  addUser: (data: Omit<User, 'id'> & { password: string }) => Promise<void>;
 }
 
 const AppContext = createContext<AppContextValue>({} as AppContextValue);
@@ -234,7 +242,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const loadAll = useCallback(async () => {
     if (!isApiEnabled()) { setLoading(false); return; }
-    setLoading(true);
+    // Do NOT setLoading(true) here — it causes users[] to briefly appear empty
+    // which makes currentUser null and flashes the login screen.
     try {
       const [usersRes, reqRes, poRes, notifRes] = await Promise.all([
         fetchUsers(),
@@ -242,6 +251,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         fetchPurchaseOrders(),
         fetchNotifications(),
       ]);
+      // Update all state atomically in a single batch — no intermediate empty states
       setUsers(usersRes.map(mapUser));
       setRequisitions(reqRes.results.map(mapRequisition));
       setPurchaseOrders(poRes.results.map(mapPO));
@@ -300,7 +310,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       is_capex: data.isCapex ?? false,
       supplier: data.supplier, supplier_email: data.supplierEmail,
       supplier_phone: data.supplierPhone, supplier_address: data.supplierAddress,
-      supplier_contact: data.supplierContact, vehicle_reg: data.vehicleReg,
+      supplier_contact: data.supplierContact,
+      supplier_bank_name: data.supplierBankName, supplier_bank_account_name: data.supplierBankAccountName,
+      supplier_bank_account_number: data.supplierBankAccountNumber, supplier_bank_branch: data.supplierBankBranch,
+      suppliers_json: data.suppliers ?? null,
+      preferred_supplier_index: data.preferredSupplierIndex ?? null,
+      preferred_supplier_justification: data.preferredSupplierJustification ?? '',
+      vehicle_reg: data.vehicleReg,
       fuel_type: data.fuelType, fuel_quantity: data.fuelQuantity ?? null,
       travel_destination: data.travelDestination,
       travel_start_date: data.travelStartDate ?? null,
@@ -337,6 +353,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       supplier_phone: data.supplierPhone ?? req.supplierPhone,
       supplier_address: data.supplierAddress ?? req.supplierAddress,
       supplier_contact: data.supplierContact ?? req.supplierContact,
+      supplier_bank_name: data.supplierBankName ?? req.supplierBankName,
+      supplier_bank_account_name: data.supplierBankAccountName ?? req.supplierBankAccountName,
+      supplier_bank_account_number: data.supplierBankAccountNumber ?? req.supplierBankAccountNumber,
+      supplier_bank_branch: data.supplierBankBranch ?? req.supplierBankBranch,
+      suppliers_json: data.suppliers !== undefined ? (data.suppliers ?? null) : (req.suppliers ?? null),
+      preferred_supplier_index: data.preferredSupplierIndex !== undefined ? (data.preferredSupplierIndex ?? null) : (req.preferredSupplierIndex ?? null),
+      preferred_supplier_justification: data.preferredSupplierJustification !== undefined ? data.preferredSupplierJustification : (req.preferredSupplierJustification ?? ''),
       vehicle_reg: data.vehicleReg ?? req.vehicleReg,
       fuel_type: data.fuelType ?? req.fuelType,
       fuel_quantity: data.fuelQuantity ?? req.fuelQuantity ?? null,
@@ -360,8 +383,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   const submitRequisition = async (id: string, currentUser: User) => {
-    const req = requisitions.find(r => r.id === id);
-    if (!req) return;
+    let req = requisitions.find(r => r.id === id);
+    if (!req) {
+      // State may not have updated yet (e.g. right after createRequisition) — fetch from API
+      const fresh = await fetchRequisition(Number(id));
+      req = mapRequisition(fresh);
+    }
     const firstRole = req.approvalChain[0]?.role ?? null;
     await apiUpdateRequisition(Number(id), {
       status: 'Submitted', submitted_at: now(), current_approver_role: firstRole,
@@ -383,7 +410,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const approveStep = async (reqId: string, currentUser: User, comments: string) => {
     const req = requisitions.find(r => r.id === reqId);
     if (!req) throw new Error('Requisition not found.');
-    const chain = req.approvalChain.map(s => ({ ...s }));
+    // If the chain is empty (e.g. legacy requisition created before chain persistence),
+    // rebuild it from the template so approval can still proceed.
+    let chain = req.approvalChain.map(s => ({ ...s }));
+    if (chain.length === 0 && req.currentApproverRole) {
+      const template = buildApprovalChain(req.type);
+      const currentIdx = template.findIndex(s => s.role === req.currentApproverRole);
+      chain = template.map((s, i) => ({
+        id: String(i),
+        role: s.role as UserRole,
+        label: s.label,
+        status: (i < currentIdx ? 'Approved' : 'Pending') as ApprovalStep['status'],
+        approverId: undefined,
+        approverName: undefined,
+        timestamp: undefined,
+        comments: undefined,
+        delegatedTo: undefined,
+        delegatedToName: undefined,
+      }));
+    }
     // Find the pending step whose role matches the current approver role
     const stepIdx = chain.findIndex(
       s => s.status === 'Pending' && s.role === req.currentApproverRole
@@ -434,7 +479,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const rejectRequisition = async (reqId: string, currentUser: User, reason: string) => {
     const req = requisitions.find(r => r.id === reqId);
     if (!req) return;
-    const chain = req.approvalChain.map(s =>
+    let baseChain = req.approvalChain;
+    if (baseChain.length === 0 && req.currentApproverRole) {
+      const template = buildApprovalChain(req.type);
+      const currentIdx = template.findIndex(s => s.role === req.currentApproverRole);
+      baseChain = template.map((s, i) => ({
+        id: String(i), role: s.role as UserRole, label: s.label,
+        status: (i < currentIdx ? 'Approved' : 'Pending') as ApprovalStep['status'],
+        approverId: undefined, approverName: undefined, timestamp: undefined,
+        comments: undefined, delegatedTo: undefined, delegatedToName: undefined,
+      }));
+    }
+    const chain = baseChain.map(s =>
       currentUser.roles.includes(s.role) && s.status === 'Pending'
         ? { ...s, status: 'Rejected' as const, timestamp: now(), approverName: currentUser.name, approverId: currentUser.id, comments: reason }
         : s
@@ -578,8 +634,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // ─── Users ──────────────────────────────────────────────────────────────────
 
-  const updateUser = async (id: string, data: Partial<User>) => {
-    const payload: Partial<ApiUser> & { roles?: string[] } = {};
+  const updateUser = async (id: string, data: Partial<User> & { password?: string }) => {
+    const payload: Partial<ApiUser> & { roles?: string[]; password?: string; [key: string]: unknown } = {};
     if (data.name !== undefined) payload.name = data.name;
     if (data.email !== undefined) payload.email = data.email;
     if (data.password !== undefined) payload.password = data.password;
@@ -599,9 +655,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     await updateUser(id, { active: !user.active });
   };
 
-  const addUser = async (data: Omit<User, 'id'>) => {
+  const addUser = async (data: Omit<User, 'id'> & { password: string }) => {
     const created = await apiCreateUser({
-      name: data.name, email: data.email, password: data.password,
+      name: data.name, email: data.email, ...(data.password && { password: data.password }),
       department: data.department, active: data.active,
       joined_date: data.joinedDate || null,
       phone: data.phone || '', avatar: data.avatar || '',
@@ -614,6 +670,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   return (
     <AppContext.Provider value={{
       requisitions, purchaseOrders, notifications, auditLog, users, loading, reload: loadAll,
+      loadRequisitionDetail: (id) => refreshReq(id).then(() => {}),
       createRequisition, updateRequisition, submitRequisition, approveStep,
       rejectRequisition, returnRejectedToDraft, cancelRequisition, addComment,
       markAsPendingPayment, markAsPaid, uploadProofOfPayment, generatePO,

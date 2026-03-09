@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useMemo, useRef } from 'react';
 import { RouterProvider } from 'react-router';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { AppProvider } from './context/AppContext';
@@ -7,19 +7,26 @@ import { createAppRouter } from './routes';
 
 function AppInner() {
   const { currentUser, logout } = useAuth();
-  const [loggedIn, setLoggedIn] = useState(!!currentUser);
+  // Track whether user has ever been logged in this session.
+  // Once true, never go back to LoginPage due to a transient null currentUser.
+  const everLoggedIn = useRef(false);
+  if (currentUser) everLoggedIn.current = true;
 
-  const handleLogin = useCallback(() => setLoggedIn(true), []);
+  // Wire up logout on the stable router by keeping a ref to latest logout fn
+  const logoutRef = useRef(logout);
+  logoutRef.current = logout;
 
-  const handleLogout = useCallback(() => {
-    logout();
-    setLoggedIn(false);
-  }, [logout]);
+  // Stable router whose logout callback always calls the latest logout fn
+  const router = useMemo(() => createAppRouter(() => logoutRef.current()), []);
 
-  const router = useMemo(() => createAppRouter(handleLogout), [handleLogout]);
+  if (!currentUser && !everLoggedIn.current) {
+    return <LoginPage onLogin={() => {}} />;
+  }
 
-  if (!loggedIn || !currentUser) {
-    return <LoginPage onLogin={handleLogin} />;
+  if (!currentUser && everLoggedIn.current) {
+    // User explicitly logged out — reset and show login
+    everLoggedIn.current = false;
+    return <LoginPage onLogin={() => {}} />;
   }
 
   return <RouterProvider router={router} />;

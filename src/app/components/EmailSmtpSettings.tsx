@@ -1,13 +1,13 @@
 import { useState, useEffect } from 'react';
-import { getApiBase } from '../api/client';
-import { fetchSmtpSettings, saveSmtpSettings, type SmtpSettingsPublic, type SmtpSettingsSave } from '../api/client';
+import { fetchSmtpSettings, saveSmtpSettings, isApiEnabled, type SmtpSettingsPublic, type SmtpSettingsSave } from '../api/client';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Input } from './ui/input';
 import { Button } from './ui/button';
 import { Alert, AlertDescription, AlertTitle } from './ui/alert';
-import { Mail, Info, CheckCircle } from 'lucide-react';
+import { Mail, CheckCircle } from 'lucide-react';
 
 export function EmailSmtpSettings() {
+  const apiEnabled = isApiEnabled();
   const [config, setConfig] = useState<SmtpSettingsPublic | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -21,14 +21,7 @@ export function EmailSmtpSettings() {
     use_tls: true,
   });
 
-  const apiBase = getApiBase();
-
   useEffect(() => {
-    if (!apiBase) {
-      setConfig({ configured: false });
-      setLoading(false);
-      return;
-    }
     fetchSmtpSettings()
       .then((data) => {
         setConfig(data);
@@ -45,14 +38,10 @@ export function EmailSmtpSettings() {
       })
       .catch(() => setConfig({ configured: false }))
       .finally(() => setLoading(false));
-  }, [apiBase]);
+  }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!apiBase) {
-      setMessage({ type: 'error', text: 'Backend is not configured. Set VITE_API_BASE to enable email notifications.' });
-      return;
-    }
     if (!form.host.trim()) {
       setMessage({ type: 'error', text: 'SMTP host is required.' });
       return;
@@ -85,16 +74,6 @@ export function EmailSmtpSettings() {
           Configure an SMTP server to send notification emails to users (requisition status, pending approvals). When not configured, only in-app notifications are used.
         </p>
       </div>
-
-      {!apiBase && (
-        <Alert className="bg-amber-50 border-amber-200 text-amber-800 [&_svg]:text-amber-600">
-          <Info className="size-4" />
-          <AlertTitle>Backend required</AlertTitle>
-          <AlertDescription>
-            Set <code className="bg-amber-100 px-1 rounded">VITE_API_BASE</code> (e.g. <code className="bg-amber-100 px-1 rounded">http://localhost:8000</code>) to connect to the backend. Email sending is handled by the backend when SMTP is configured there.
-          </AlertDescription>
-        </Alert>
-      )}
 
       {config?.configured && (
         <Alert className="bg-green-50 border-green-200 text-green-800 [&_svg]:text-green-600">
@@ -130,7 +109,7 @@ export function EmailSmtpSettings() {
                   onChange={(e) => setForm((f) => ({ ...f, host: e.target.value }))}
                   placeholder="smtp.example.com"
                   required
-                  disabled={!apiBase}
+                  disabled={!apiEnabled}
                 />
               </div>
               <div>
@@ -140,7 +119,7 @@ export function EmailSmtpSettings() {
                   value={form.port}
                   onChange={(e) => setForm((f) => ({ ...f, port: parseInt(e.target.value, 10) || 587 }))}
                   placeholder="587"
-                  disabled={!apiBase}
+                  disabled={!apiEnabled}
                 />
               </div>
             </div>
@@ -150,7 +129,7 @@ export function EmailSmtpSettings() {
                 value={form.username}
                 onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))}
                 placeholder="Leave blank if not required"
-                disabled={!apiBase}
+                disabled={!apiEnabled}
               />
             </div>
             <div>
@@ -160,7 +139,7 @@ export function EmailSmtpSettings() {
                 value={form.password}
                 onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
                 placeholder="Leave blank to keep existing"
-                disabled={!apiBase}
+                disabled={!apiEnabled}
                 autoComplete="new-password"
               />
               <p className="text-slate-500 text-xs mt-1">Only enter to change; existing password is not shown.</p>
@@ -172,7 +151,7 @@ export function EmailSmtpSettings() {
                 value={form.from_email}
                 onChange={(e) => setForm((f) => ({ ...f, from_email: e.target.value }))}
                 placeholder="noreply@yourcompany.com"
-                disabled={!apiBase}
+                disabled={!apiEnabled}
               />
             </div>
             <div className="flex items-center gap-2">
@@ -181,13 +160,13 @@ export function EmailSmtpSettings() {
                 id="use_tls"
                 checked={form.use_tls}
                 onChange={(e) => setForm((f) => ({ ...f, use_tls: e.target.checked }))}
-                disabled={!apiBase}
+                disabled={!apiEnabled}
                 className="rounded border-slate-300"
               />
               <label htmlFor="use_tls" className="text-slate-700 text-sm">Use TLS (recommended for port 587)</label>
             </div>
             <div className="pt-2">
-              <Button type="submit" disabled={!apiBase || saving}>
+              <Button type="submit" disabled={!apiEnabled || saving}>
                 {saving ? 'Saving…' : 'Save SMTP settings'}
               </Button>
             </div>

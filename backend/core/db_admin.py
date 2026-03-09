@@ -60,7 +60,7 @@ def backup_list(request):
             backups.append({
                 'filename': f.name,
                 'size_bytes': stat.st_size,
-                'created': datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                'created': datetime.utcfromtimestamp(stat.st_mtime).strftime('%Y-%m-%dT%H:%M:%S') + 'Z',
             })
     return Response({'backups': backups})
 
@@ -70,7 +70,9 @@ def backup_list(request):
 def backup_create(request):
     """Create a full DB backup to the named volume (plain SQL)."""
     BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
-    name = (request.data.get('name') or '').strip() or datetime.utcnow().strftime('%Y-%m-%d_%H-%M-%S')
+    created_at = datetime.utcnow()
+    default_name = created_at.strftime('%Y-%m-%d_%H-%M-%S')
+    name = (request.data.get('name') or '').strip() or default_name
     safe_name = "".join(c for c in name if c.isalnum() or c in '-_')
     filename = f"backup_{safe_name}.sql"
     filepath = BACKUP_ROOT / filename
@@ -88,6 +90,8 @@ def backup_create(request):
                 '-U', db['user'],
                 '-d', db['name'],
                 '-F', 'p',
+                '--clean',
+                '--if-exists',
                 '-f', str(filepath),
             ],
             env=env,
@@ -101,7 +105,7 @@ def backup_create(request):
             'filename': filename,
             'path': str(filepath),
             'size_bytes': size,
-            'created': datetime.fromtimestamp(filepath.stat().st_mtime).isoformat(),
+            'created': created_at.strftime('%Y-%m-%dT%H:%M:%S') + 'Z',
         })
     except subprocess.CalledProcessError as e:
         return Response(
@@ -110,6 +114,20 @@ def backup_create(request):
         )
     except Exception as e:
         return Response({'error': str(e)}, status=500)
+
+
+def _filter_pg17_session_params(sql_content: str) -> str:
+    """Remove SET/set_config lines for params not in older PostgreSQL (e.g. transaction_timeout in PG17)."""
+    lines = []
+    for line in sql_content.splitlines():
+        s = line.strip()
+        if (
+            (s.startswith('SET ') and 'transaction_timeout' in s)
+            or ("set_config('transaction_timeout'" in s)
+        ):
+            continue
+        lines.append(line)
+    return '\n'.join(lines) + '\n' if lines else sql_content
 
 
 @api_view(['POST'])
@@ -130,6 +148,8 @@ def backup_restore(request):
     env['PGPASSWORD'] = db['password']
 
     try:
+        sql = filepath.read_text(encoding='utf-8', errors='replace')
+        sql = _filter_pg17_session_params(sql)
         result = subprocess.run(
             [
                 'psql',
@@ -138,8 +158,9 @@ def backup_restore(request):
                 '-U', db['user'],
                 '-d', db['name'],
                 '-v', 'ON_ERROR_STOP=1',
-                '-f', str(filepath),
+                '-f', '-',
             ],
+            input=sql,
             env=env,
             capture_output=True,
             text=True,

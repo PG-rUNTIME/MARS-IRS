@@ -18,7 +18,7 @@ const ROLE_COLORS: Record<UserRole, string> = {
   'Auditor': 'bg-teal-100 text-teal-700',
 };
 
-const EMPTY_USER: Omit<User, 'id'> = {
+const EMPTY_USER: Omit<User, 'id'> & { password: string } = {
   name: '', email: '', password: 'mars2026', roles: ['Requester'],
   department: 'Operations', active: true, joinedDate: new Date().toISOString().split('T')[0],
 };
@@ -30,7 +30,7 @@ export function UserManagement() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editData, setEditData] = useState<Partial<User>>({});
   const [showAdd, setShowAdd] = useState(false);
-  const [newUser, setNewUser] = useState<Omit<User, 'id'>>(EMPTY_USER);
+  const [newUser, setNewUser] = useState<Omit<User, 'id'> & { password: string }>(EMPTY_USER);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saved, setSaved] = useState(false);
 

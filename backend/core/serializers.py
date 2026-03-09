@@ -1,9 +1,21 @@
+import bcrypt
 from rest_framework import serializers
 from .models import (
     User, UserRole, Requisition, ApprovalStep, ReqComment,
     Attachment, POItem, PurchaseOrder, AppNotification,
     DelegationRecord, AuditEntry,
 )
+
+
+def hash_password(plain: str) -> str:
+    return bcrypt.hashpw(plain.encode(), bcrypt.gensalt()).decode()
+
+
+def check_password(plain: str, hashed: str) -> bool:
+    try:
+        return bcrypt.checkpw(plain.encode(), hashed.encode())
+    except Exception:
+        return False
 
 
 class UserRoleSerializer(serializers.ModelSerializer):
@@ -16,6 +28,8 @@ class UserSerializer(serializers.ModelSerializer):
     roles = serializers.SerializerMethodField()
     joined_date = serializers.DateField(required=False, allow_null=True)
     password_changed_at = serializers.DateField(required=False, allow_null=True)
+    # Accept plain-text password on write; never return it on read
+    password = serializers.CharField(write_only=True, required=False, allow_blank=True)
 
     class Meta:
         model = User
@@ -24,13 +38,15 @@ class UserSerializer(serializers.ModelSerializer):
             'joined_date', 'phone', 'avatar', 'must_change_password',
             'password_changed_at', 'roles', 'created_at', 'updated_at',
         ]
-        extra_kwargs = {'password': {'write_only': False}}  # plain-text for demo
 
     def get_roles(self, obj):
         return list(obj.roles.values_list('role', flat=True))
 
     def create(self, validated_data):
         roles = self.initial_data.get('roles', [])
+        plain = validated_data.pop('password', None)
+        if plain:
+            validated_data['password'] = hash_password(plain)
         user = User.objects.create(**validated_data)
         for r in roles:
             UserRole.objects.get_or_create(user=user, role=r)
@@ -38,6 +54,9 @@ class UserSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         roles = self.initial_data.get('roles', None)
+        plain = validated_data.pop('password', None)
+        if plain:
+            validated_data['password'] = hash_password(plain)
         for attr, val in validated_data.items():
             setattr(instance, attr, val)
         instance.save()
@@ -92,6 +111,7 @@ class RequisitionListSerializer(serializers.ModelSerializer):
     requester_name = serializers.CharField(source='requester.name', read_only=True)
     requester_email = serializers.CharField(source='requester.email', read_only=True)
     current_approver_role = serializers.CharField(allow_null=True, required=False)
+    approval_chain = ApprovalStepSerializer(many=True, read_only=True)
 
     class Meta:
         model = Requisition
@@ -101,10 +121,13 @@ class RequisitionListSerializer(serializers.ModelSerializer):
             'requester_id', 'requester_name', 'requester_email',
             'status', 'current_approver_role', 'is_capex', 'po_generated', 'po_number',
             'supplier', 'supplier_email', 'supplier_phone', 'supplier_address', 'supplier_contact',
+            'supplier_bank_name', 'supplier_bank_account_name', 'supplier_bank_account_number', 'supplier_bank_branch',
+            'suppliers_json', 'preferred_supplier_index', 'preferred_supplier_justification',
             'vehicle_reg', 'fuel_type', 'fuel_quantity',
             'travel_destination', 'travel_start_date', 'travel_end_date',
             'asset_type', 'asset_specs', 'maintenance_item', 'maintenance_urgency',
             'created_at', 'updated_at', 'submitted_at', 'paid_at',
+            'approval_chain',
         ]
 
 
@@ -136,6 +159,8 @@ class RequisitionWriteSerializer(serializers.ModelSerializer):
     requester_id = serializers.PrimaryKeyRelatedField(
         source='requester', queryset=User.objects.all()
     )
+    # Override EmailField → CharField so blank/null passes without email format validation
+    supplier_email = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
     class Meta:
         model = Requisition
@@ -145,10 +170,48 @@ class RequisitionWriteSerializer(serializers.ModelSerializer):
             'requester_id', 'status', 'current_approver_role', 'is_capex',
             'po_generated', 'po_number',
             'supplier', 'supplier_email', 'supplier_phone', 'supplier_address', 'supplier_contact',
+            'supplier_bank_name', 'supplier_bank_account_name', 'supplier_bank_account_number', 'supplier_bank_branch',
+            'suppliers_json', 'preferred_supplier_index', 'preferred_supplier_justification',
             'vehicle_reg', 'fuel_type', 'fuel_quantity',
             'travel_destination', 'travel_start_date', 'travel_end_date',
             'asset_type', 'asset_specs', 'maintenance_item', 'maintenance_urgency',
         ]
+        extra_kwargs = {
+            'supplier': {'required': False, 'allow_blank': True, 'allow_null': True},
+            'supplier_email': {'required': False, 'allow_blank': True, 'allow_null': True},
+            'supplier_phone': {'required': False, 'allow_blank': True, 'allow_null': True},
+            'supplier_address': {'required': False, 'allow_blank': True, 'allow_null': True},
+            'supplier_contact': {'required': False, 'allow_blank': True, 'allow_null': True},
+            'supplier_bank_name': {'required': False, 'allow_blank': True, 'allow_null': True},
+            'supplier_bank_account_name': {'required': False, 'allow_blank': True, 'allow_null': True},
+            'supplier_bank_account_number': {'required': False, 'allow_blank': True, 'allow_null': True},
+            'supplier_bank_branch': {'required': False, 'allow_blank': True, 'allow_null': True},
+            'vehicle_reg': {'required': False, 'allow_blank': True, 'allow_null': True},
+            'fuel_type': {'required': False, 'allow_blank': True, 'allow_null': True},
+            'travel_destination': {'required': False, 'allow_blank': True, 'allow_null': True},
+            'asset_type': {'required': False, 'allow_blank': True, 'allow_null': True},
+            'asset_specs': {'required': False, 'allow_blank': True, 'allow_null': True},
+            'maintenance_item': {'required': False, 'allow_blank': True, 'allow_null': True},
+            'maintenance_urgency': {'required': False, 'allow_blank': True, 'allow_null': True},
+            'po_number': {'required': False, 'allow_blank': True, 'allow_null': True},
+            'current_approver_role': {'required': False, 'allow_blank': True, 'allow_null': True},
+            'preferred_supplier_justification': {'required': False, 'allow_blank': True, 'allow_null': True},
+        }
+
+    # Coerce null → '' for all optional text fields so DB constraints aren't violated
+    _nullable_text_fields = [
+        'supplier', 'supplier_email', 'supplier_phone', 'supplier_address', 'supplier_contact',
+        'supplier_bank_name', 'supplier_bank_account_name', 'supplier_bank_account_number', 'supplier_bank_branch',
+        'vehicle_reg', 'fuel_type', 'travel_destination', 'asset_type', 'asset_specs',
+        'maintenance_item', 'maintenance_urgency', 'po_number', 'current_approver_role',
+        'preferred_supplier_justification',
+    ]
+
+    def validate(self, attrs):
+        for field in self._nullable_text_fields:
+            if field in attrs and attrs[field] is None:
+                attrs[field] = ''
+        return attrs
 
 
 class PurchaseOrderSerializer(serializers.ModelSerializer):
