@@ -1,119 +1,191 @@
-# MARS IRS
+# MARS IRS – System Architecture
 
-**MARS  IRS** (Internal Requisitions System) covers both **frontend** (this repo) and **backend** (APIs, auth, persistence). This document describes both. For a visual overview, see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+High-level architecture of the full system (frontend, backend, database) and main data flows.
 
 ---
 
-## Frontend
+## High-level overview
 
-### Stack
+```mermaid
+flowchart TB
+  subgraph Client["🖥️ Client"]
+    Browser["Browser"]
+  end
 
-- **React 18** + **TypeScript**
-- **Vite 7** (build tool)
-- **React Router 7** (routing)
-- **Tailwind CSS 4** (styling)
-- **Recharts** (charts)
+  subgraph Frontend["Frontend (Static)"]
+    SPA["React SPA\n(Vite build)"]
+    SPA --> Router["React Router"]
+    SPA --> Context["AppContext\n(in-memory state)"]
+    SPA --> API["API client\n(VITE_API_BASE)"]
+  end
 
-At present the app uses **in-memory state** (AppContext) and mock users; a real backend would replace this with API calls.
+  subgraph Backend["Backend (Django)"]
+    API_GW["HTTP API"]
+    API_GW --> Auth["Auth / Sessions"]
+    API_GW --> ReqAPI["Requisitions API"]
+    API_GW --> POAPI["Purchase Orders API"]
+    API_GW --> AuditAPI["Audit API"]
+    API_GW --> DBAPI["Database / Backup API"]
+  end
 
-### Run
+  subgraph Data["Data"]
+    PG[("PostgreSQL")]
+  end
 
-```bash
-npm install
-npm run dev
-```
-
-Open [http://localhost:5173](http://localhost:5173) (or the port shown in the terminal).
-
-```bash
-npm run build      # production build
-npm run preview    # preview production build
-```
-
-Clean rebuild (no cache):
-
-```bash
-rm -rf node_modules/.vite dist && npm run build
-```
-
-### Features (UI)
-
-- **Dashboard** – KPIs and charts by role (e.g. department heads see department requisitions).
-- **Requisitions** – Create, edit (draft), submit; search and filter by type, status, department.
-- **Department Requisitions** – Department heads see all requisitions in their department and stages.
-- **Approval workflow** – Approve, reject, return to draft; comments and audit trail.
-- **Purchase Orders** – Auto-generated on final approval for Supplier Payment and High-Value/CAPEX; view from requisition or Purchase Orders list.
-- **Payment** – Pending Payment → accountant views PO, pays externally, uploads POP → status becomes Paid.
-- **Attachments** – Supporting documents (e.g. PDFs); upload and download where stored.
-- **Audit trail** – Filterable log of actions.
-- **Reports** – Summary and breakdowns by type, status, department.
-- **User management** – (Admin) Users, roles, departments.
-
-### Frontend structure
-
-```
-src/
-  app/
-    components/     # Layout, Dashboard, RequisitionForm, RequisitionDetail, etc.
-    context/        # AppContext (requisitions, POs, notifications, audit)
-    data/           # types, mock users, role capabilities
-    routes.tsx
-  styles/
+  Browser -->|HTTPS| SPA
+  API -->|REST / JSON| API_GW
+  Backend -->|SQL| PG
 ```
 
 ---
 
-## Backend
+## Component diagram
 
-The backend is responsible for **authentication**, **persistence**, and **business rules** (approvals, PO generation, payment status). The frontend expects a backend that exposes APIs and stores data in a database.
+```mermaid
+flowchart LR
+  subgraph Users
+    U1[Requester]
+    U2[Dept Manager]
+    U3[Accountant]
+    U4[GM / FC / Head of Ops]
+    U5[Auditor / Admin]
+  end
 
-### Responsibilities
+  subgraph Frontend["Frontend"]
+    UI[React UI\nLogin, Dashboard,\nRequisitions, PO, Reports]
+    State[AppContext\nRequisitions, POs,\nNotifications, Audit]
+    Client[API client\nAudit, DB health when\nVITE_API_BASE set]
+  end
 
-| Area | Backend role |
-|------|----------------|
-| **Auth** | Login, sessions/JWT, role-based access (Department Manager, Accountant, GM, FC, Head of Ops, Auditor, Admin). |
-| **Requisitions** | CRUD, status transitions (Draft → Submitted → Pending Approval/Review → Pending Payment → Paid), approval chain by type. |
-| **Approval chain** | Petty Cash: Dept Manager → Accountant → Head of Ops & Training. Supplier Payment / High-Value/CAPEX: Dept Manager → Accountant → GM → FC. |
-| **Purchase orders** | Auto-generate PO on final approval for Supplier Payment and High-Value/CAPEX; store PO number and link to requisition. |
-| **Payment** | Pending Payment → accountant uploads Proof of Payment (POP); mark requisition Paid with `paidAt`. |
-| **Attachments** | Store file metadata and (or) file binary/blob storage for supporting docs and POP. |
-| **Audit** | Append-only log of actions (create, submit, approve, reject, PO generated, POP uploaded, etc.) with user, timestamp, requisition id. |
-| **Users & roles** | User CRUD, departments, roles, active flag. |
+  subgraph Backend["Backend (Django)"]
+    WSGI[WSGI / ASGI]
+    AuthB[Auth]
+    ReqB[Requisitions]
+    POB[Purchase Orders]
+    AuditB[Audit log]
+    DBHealth[DB health / backups]
+  end
 
-### Suggested API shape (examples)
+  subgraph DB
+    PG[("PostgreSQL")]
+  end
 
-- `POST /auth/login` → token / session
-- `GET /me` → current user and roles
-- `GET /requisitions` – list (filters: status, type, department)
-- `POST /requisitions` – create (draft)
-- `PATCH /requisitions/:id` – update draft
-- `POST /requisitions/:id/submit`
-- `POST /requisitions/:id/approve` – body: comments
-- `POST /requisitions/:id/reject` – body: reason
-- `POST /requisitions/:id/return-to-draft`
-- `POST /requisitions/:id/upload-pop` – multipart POP file → mark Paid
-- `GET /purchase-orders` – list POs (optionally by requisition)
-- `GET /audit` – audit log (filters)
-- `GET /users`, `POST /users`, `PATCH /users/:id` – admin
-
-### Data model (high level)
-
-- **User** – id, name, email, department, roles[], active.
-- **Requisition** – id, reqNumber (e.g. `IR…` / `PC…` + timestamp), type (Petty Cash, Supplier Payment (Normal), High-Value/CAPEX), status, amount, currency, department, cost centre, requester, approval chain (steps with role/status), supplier fields, attachments[], proofOfPayment?, poGenerated, poNumber, paidAt, audit references.
-- **PurchaseOrder** – id, poNumber, requisitionId, supplier, amount, etc.
-- **AuditEntry** – action, userId, requisitionId, timestamp, details.
-
----
-
-## Requisition numbers
-
-- **Petty Cash:** `PC` + timestamp (e.g. `PC20260306143045123`)
-- **All other types:** `IR` + timestamp (e.g. `IR20260306143045123`)
-
-Format: `PREFIX` + `YYYYMMDDHHmmssmmm` (no dashes).
+  Users --> UI
+  UI --> State
+  UI --> Client
+  Client -->|REST| WSGI
+  WSGI --> AuthB
+  WSGI --> ReqB
+  WSGI --> POB
+  WSGI --> AuditB
+  WSGI --> DBHealth
+  AuthB --> PG
+  ReqB --> PG
+  POB --> PG
+  AuditB --> PG
+  DBHealth --> PG
+```
 
 ---
 
-## License
+## Request flow (simplified)
 
-Private / internal use.
+```mermaid
+sequenceDiagram
+  participant U as User (Browser)
+  participant F as Frontend (React)
+  participant B as Backend (Django)
+  participant D as PostgreSQL
+
+  Note over F: In-memory mode (no VITE_API_BASE)
+  U->>F: Load app
+  F->>F: AppContext (requisitions, POs, audit)
+  U->>F: Create / approve / upload POP
+  F->>F: Update state only
+
+  Note over F,B: API mode (VITE_API_BASE set)
+  U->>F: Audit trail / DB health
+  F->>B: GET /api/audit/ or /api/database/health/
+  B->>D: Query
+  D-->>B: Rows
+  B-->>F: JSON
+  F-->>U: UI
+```
+
+---
+
+## Requisition lifecycle (logical flow)
+
+```mermaid
+stateDiagram-v2
+  [*] --> Draft
+  Draft --> Submitted: Submit
+  Submitted --> Pending_Review: Dept Manager approves
+  Pending_Review --> Pending_Approval: Accountant approves
+  Pending_Approval --> Pending_Approval: GM / FC approve (non–Petty Cash)
+  Pending_Approval --> Pending_Payment: Final approval\n(+ auto PO for Supplier/High-Value)
+  Pending_Payment --> Paid: Accountant uploads POP
+  Submitted --> Rejected: Reject
+  Rejected --> Draft: Return to draft
+  Draft --> Cancelled: Cancel
+```
+
+---
+
+## Deployment (Docker)
+
+```mermaid
+flowchart TB
+  subgraph Docker["Docker"]
+    subgraph Frontend["Frontend container"]
+      FE["Frontend\nnginx serves dist"]
+    end
+    subgraph Backend["Backend container"]
+      BE["Backend\nbackend/Dockerfile"]
+    end
+    subgraph DB["PostgreSQL container"]
+      PG[("DB")]
+    end
+  end
+
+  User["Users"] --> FE
+  FE -->|/api proxied or VITE_API_BASE| BE
+  BE --> PG
+```
+
+---
+
+## Ports used by the system
+
+| Port  | Component        | When / where |
+|-------|------------------|--------------|
+| **5173** | Frontend (Vite dev server) | Local dev: `npm run dev`. Default Vite port; may show 5174, 5175 if 5173 is in use. |
+| **5174** | Frontend (nginx) | Docker Compose: host port **5174** → container port 80. Access app at `http://localhost:5174`. |
+| **8000** | Backend (Django) | Inside backend container; also Django default when running `runserver` locally. |
+| **8001** | Backend (Django) | Docker Compose: host port **8001** → container 8000. Frontend (when built with `VITE_API_BASE=http://localhost:8001`) calls API at `http://localhost:8001`. |
+| **5432** | PostgreSQL       | DB listens on **5432** inside the `db` container. Not exposed to host in `docker-compose.yml`; only the backend container connects to it. If you run Postgres locally, it uses 5432 on the host. |
+
+**Summary**
+
+- **Docker Compose:** Use **5174** (frontend) and **8001** (backend) on your machine; Postgres is internal (5432).
+- **Local dev (no Docker):** Frontend **5173**, backend **8000**, Postgres **5432** (if running locally).
+
+---
+
+## File / repo layout (conceptual)
+
+| Layer      | Location        | Purpose |
+|-----------|------------------|--------|
+| Frontend  | `/` (repo root)  | Vite, React, Tailwind; `src/app/` (components, context, routes). |
+| Backend   | `/backend`       | Django app; `manage.py`, Dockerfile, entrypoint, migrations. |
+| Docs      | `/docs`          | Architecture, deploy guides. |
+| Docker    | `docker-compose.yml`, `Dockerfile.frontend` | Local run: db + backend + frontend. |
+
+---
+
+## Summary
+
+- **Frontend:** Single-page app (React + Vite). Serves static assets; state in memory (AppContext) or via backend when `VITE_API_BASE` is set (audit, DB health).
+- **Backend:** Django HTTP API for auth, requisitions, POs, audit, DB health/backups. Writes to PostgreSQL.
+- **Database:** PostgreSQL; holds users, requisitions, approval chains, POs, audit log, attachments/POP metadata (and optionally file storage).
+- **Deployment:** Docker: frontend (nginx), backend (Django), PostgreSQL. Frontend build-time env `VITE_API_BASE` points to backend URL (empty when same-origin proxy).
