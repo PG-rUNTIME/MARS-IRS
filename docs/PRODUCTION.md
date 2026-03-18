@@ -33,6 +33,10 @@ Use this checklist when deploying the IR system to production with Docker.
 6. **Change the default admin password**  
    First login: `admin@marsambulance.com` / `mars2026`. Change it immediately in User Management. For new deploys you can set `ADMIN_PASSWORD` (and optionally `ADMIN_EMAIL`) in the backend environment so the seed creates an admin with a secure password.
 
+7. **Email “log in” link (notification emails)**  
+   Set **`FRONTEND_BASE_URL`** on the backend to your real app URL (e.g. `https://app.yourdomain.com`, no trailing slash). Requisition notification emails include a login link built as `{FRONTEND_BASE_URL}/login`.  
+   Optional: **`REQUISITION_EMAIL_SYSTEM_NAME`** — short label shown above the summary table (default: `MARS Internal Requisition System`).
+
 ---
 
 ## Docker production deploy

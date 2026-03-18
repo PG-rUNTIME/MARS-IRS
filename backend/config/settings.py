@@ -104,7 +104,17 @@ REST_FRAMEWORK = {
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 25,
     'DEFAULT_RENDERER_CLASSES': ['rest_framework.renderers.JSONRenderer'],
+    'DEFAULT_AUTHENTICATION_CLASSES': ['core.auth.ApiTokenAuthentication'],
+    'DEFAULT_PERMISSION_CLASSES': ['rest_framework.permissions.IsAuthenticated'],
 }
+
+# File storage (attachments)
+MEDIA_URL = '/media/'
+MEDIA_ROOT = env('MEDIA_ROOT', default=str(BASE_DIR / 'media'))
+
+# Login link in notification emails (absolute URL)
+FRONTEND_BASE_URL = env('FRONTEND_BASE_URL', default='http://localhost:5174').rstrip('/')
+REQUISITION_EMAIL_SYSTEM_NAME = env('REQUISITION_EMAIL_SYSTEM_NAME', default='MARS Internal Requisition System')
 
 # Production security (when not DEBUG, e.g. behind HTTPS proxy)
 if not DEBUG:

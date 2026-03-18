@@ -1,18 +1,22 @@
 import csv
+import base64
+import os
+import re
 from decimal import Decimal
 from django.core.mail import get_connection
 from django.db import transaction
 from django.db.models import Q
-from django.http import HttpResponse
+from django.http import HttpResponse, FileResponse
+from django.conf import settings
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.pagination import PageNumberPagination
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from .models import (
-    User, Requisition, ApprovalStep, ReqComment, Attachment,
+    User, Requisition, ApprovalStep, ReqComment, Attachment, ApiToken,
     POItem, PurchaseOrder, AppNotification, DelegationRecord, AuditEntry,
 )
 from .serializers import (
@@ -20,9 +24,11 @@ from .serializers import (
     RequisitionWriteSerializer, ApprovalStepSerializer, ReqCommentSerializer,
     AttachmentSerializer, POItemSerializer, PurchaseOrderSerializer,
     AppNotificationSerializer, DelegationRecordSerializer, AuditEntrySerializer,
-    check_password,
+    check_password, hash_password,
 )
 from .smtp_config import get_smtp_config, get_smtp_config_public, save_smtp_config
+from .requisition_email_html import build_requisition_notification_html
+from .permissions import IsSystemAdministrator, IsAuditorOrFinancialController
 
 
 # ─── Pagination ───────────────────────────────────────────────────────────────
@@ -48,17 +54,29 @@ def login(request):
         return Response({'error': 'Invalid email or password.'}, status=401)
     if not user.active:
         return Response({'error': 'Your account has been deactivated. Please contact the administrator.'}, status=403)
-    return Response(UserSerializer(user).data)
+    # Create a token for API authentication (Authorization: Token <key>)
+    token = ApiToken.objects.create(key=ApiToken.generate_key(), user=user)
+    return Response({'token': token.key, 'user': UserSerializer(user).data})
 
 
 @api_view(['POST'])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
+def logout(request):
+    """Invalidate the current token (best-effort)."""
+    auth = request.headers.get('Authorization', '')
+    if auth.startswith('Token '):
+        key = auth.split(' ', 1)[1].strip()
+        ApiToken.objects.filter(key=key).delete()
+    return Response({'status': 'ok'})
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
 def verify_password(request):
     """Verify a user's current password without changing it. Used by change-password flow."""
-    user_id = request.data.get('user_id')
     password = request.data.get('password', '')
     try:
-        user = User.objects.get(pk=user_id)
+        user = User.objects.get(pk=request.user.id)
     except (User.DoesNotExist, TypeError, ValueError):
         return Response({'valid': False}, status=400)
     return Response({'valid': check_password(password, user.password)})
@@ -67,11 +85,13 @@ def verify_password(request):
 # ─── Users ────────────────────────────────────────────────────────────────────
 
 @api_view(['GET', 'POST'])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
 def user_list(request):
     if request.method == 'GET':
         users = User.objects.prefetch_related('roles').all()
         return Response(UserSerializer(users, many=True).data)
+    if not IsSystemAdministrator().has_permission(request, None):
+        return Response({'error': 'Forbidden.'}, status=403)
     serializer = UserSerializer(data=request.data)
     if serializer.is_valid():
         user = serializer.save()
@@ -80,7 +100,7 @@ def user_list(request):
 
 
 @api_view(['GET', 'PATCH', 'DELETE'])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
 def user_detail(request, pk):
     try:
         user = User.objects.prefetch_related('roles').get(pk=pk)
@@ -89,19 +109,86 @@ def user_detail(request, pk):
     if request.method == 'GET':
         return Response(UserSerializer(user).data)
     if request.method == 'PATCH':
-        serializer = UserSerializer(user, data=request.data, partial=True)
+        if IsSystemAdministrator().has_permission(request, None):
+            serializer = UserSerializer(user, data=request.data, partial=True)
+            if serializer.is_valid():
+                serializer.save()
+                return Response(UserSerializer(user).data)
+            return Response(serializer.errors, status=400)
+        # Allow any authenticated user to update only their own password-related fields
+        # (first-login / forced password change is blocked for non-admins otherwise).
+        if request.user.id != user.id:
+            return Response({'error': 'Forbidden.'}, status=403)
+        allowed_keys = frozenset(('password', 'must_change_password', 'password_changed_at'))
+        raw = request.data if isinstance(request.data, dict) else dict(request.data)
+        extra = set(raw.keys()) - allowed_keys
+        if extra:
+            return Response(
+                {'error': 'You may only update password-related fields on your own account.'},
+                status=400,
+            )
+        payload = {k: raw[k] for k in allowed_keys if k in raw}
+        if not payload:
+            return Response({'error': 'No updatable fields.'}, status=400)
+        if user.must_change_password and payload.get('must_change_password') is False:
+            new_pw = (payload.get('password') or '').strip()
+            if not new_pw:
+                return Response(
+                    {'error': 'You must choose a new password before continuing.'},
+                    status=400,
+                )
+        serializer = UserSerializer(user, data=payload, partial=True)
         if serializer.is_valid():
             serializer.save()
             return Response(UserSerializer(user).data)
         return Response(serializer.errors, status=400)
+    if not IsSystemAdministrator().has_permission(request, None):
+        return Response({'error': 'Forbidden.'}, status=403)
     user.delete()
     return Response(status=204)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated, IsSystemAdministrator])
+def user_reset_account(request, pk):
+    """
+    Reset a user's account (admin action).
+    - Resets password to the system default (frontend shows it as mars2026)
+    - Forces user to change password on next login
+    - Clears password_changed_at
+    """
+    try:
+        user = User.objects.prefetch_related('roles').get(pk=pk)
+    except User.DoesNotExist:
+        return Response({'error': 'Not found.'}, status=404)
+
+    default_password = 'mars2026'
+    with transaction.atomic():
+        user.password = hash_password(default_password)
+        user.must_change_password = True
+        user.password_changed_at = None
+        user.active = True
+        user.save(update_fields=['password', 'must_change_password', 'password_changed_at', 'active', 'updated_at'])
+
+        actor_user_id = request.user.id
+        actor_user_name = request.user.name
+        actor_role = 'System Administrator'
+        AuditEntry.objects.create(
+            action='Account Reset',
+            user_id_str=str(actor_user_id),
+            user_name=actor_user_name,
+            user_role=actor_role,
+            details=f"Reset account for {user.name} <{user.email}>. User must change password at next login.",
+            requisition=None,
+        )
+
+    return Response(UserSerializer(user).data)
 
 
 # ─── Requisitions ─────────────────────────────────────────────────────────────
 
 @api_view(['GET', 'POST'])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
 def requisition_list(request):
     if request.method == 'GET':
         qs = Requisition.objects.select_related('requester').prefetch_related('approval_chain').all()
@@ -189,15 +276,13 @@ def requisition_list(request):
                 )
 
         # Audit
-        _log_audit(req, data.get('actor_user_id'), data.get('actor_user_name', ''),
-                   data.get('actor_user_role', ''), 'Created',
-                   f"Requisition {req.req_number} created as Draft.")
+        _log_audit(request, req, 'Created', f"Requisition {req.req_number} created as Draft.")
 
     return Response(RequisitionDetailSerializer(req).data, status=201)
 
 
 @api_view(['GET', 'PATCH', 'DELETE'])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
 def requisition_detail(request, pk):
     try:
         req = Requisition.objects.select_related('requester').prefetch_related(
@@ -270,9 +355,10 @@ def requisition_detail(request, pk):
 
             # Audit
             if data.get('audit_action'):
-                _log_audit(req, data.get('actor_user_id'), data.get('actor_user_name', ''),
-                           data.get('actor_user_role', ''), data['audit_action'],
-                           data.get('audit_details', f"Requisition {req.req_number} updated."))
+                _log_audit(
+                    request, req, data['audit_action'],
+                    data.get('audit_details', f"Requisition {req.req_number} updated.")
+                )
 
         # Set submitted_at / paid_at server-side based on payload intent.
         # Client sends non-null to set, null to clear — we use server clock for the actual value.
@@ -304,7 +390,7 @@ def requisition_detail(request, pk):
 # ─── Comments ─────────────────────────────────────────────────────────────────
 
 @api_view(['POST'])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
 def add_comment(request, req_pk):
     try:
         req = Requisition.objects.get(pk=req_pk)
@@ -316,43 +402,81 @@ def add_comment(request, req_pk):
         return Response(serializer.errors, status=400)
     comment = ReqComment.objects.create(
         requisition=req,
-        user_id=request.data['user_id'],
-        user_name=request.data.get('user_name', ''),
-        user_role=request.data.get('user_role', ''),
+        user_id=request.user.id,
+        user_name=getattr(request.user, 'name', ''),
+        user_role=(request.user.roles.values_list('role', flat=True).first() if hasattr(request.user, 'roles') else ''),
         text=request.data.get('text', ''),
         is_finance_note=request.data.get('is_finance_note', False),
     )
-    _log_audit(req, request.data.get('user_id'), request.data.get('user_name', ''),
-               request.data.get('user_role', ''), 'Comment Added',
-               f"Comment added to {req.req_number}.")
+    _log_audit(request, req, 'Comment Added', f"Comment added to {req.req_number}.")
     return Response(ReqCommentSerializer(comment).data, status=201)
 
 
 # ─── Attachments ──────────────────────────────────────────────────────────────
 
 @api_view(['POST'])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
 def add_attachment(request, req_pk):
     try:
         req = Requisition.objects.get(pk=req_pk)
     except Requisition.DoesNotExist:
         return Response({'error': 'Not found.'}, status=404)
+    data_url = request.data.get('data_url', '') or ''
     att = Attachment.objects.create(
         requisition=req,
         name=request.data.get('name', ''),
         type=request.data.get('type', ''),
         size=request.data.get('size', ''),
         uploaded_by=request.data.get('uploaded_by', ''),
-        data_url=request.data.get('data_url', ''),
+        data_url='' if data_url.startswith('data:') else data_url,
         is_proof_of_payment=request.data.get('is_proof_of_payment', False),
     )
+    # If client sent base64 data URL, store the binary on disk and return a URL instead.
+    try:
+        if data_url.startswith('data:'):
+            # Example: data:application/pdf;base64,AAA...
+            m = re.match(r'^data:(?P<mime>[^;]+);base64,(?P<b64>.+)$', data_url, re.DOTALL)
+            if m:
+                b64 = m.group('b64')
+                raw = base64.b64decode(b64)
+                # Basic size guard (10MB)
+                if len(raw) > 10 * 1024 * 1024:
+                    return Response({'error': 'Attachment too large (max 10MB).'}, status=413)
+                os.makedirs(os.path.join(settings.MEDIA_ROOT, 'attachments'), exist_ok=True)
+                ext = '.bin'
+                if att.name.lower().endswith('.pdf'):
+                    ext = '.pdf'
+                filename = f'attachment_{att.id}{ext}'
+                path = os.path.join(settings.MEDIA_ROOT, 'attachments', filename)
+                with open(path, 'wb') as f:
+                    f.write(raw)
+                att.file_path = path
+                att.data_url = f"/api/attachments/{att.id}/download/"
+                att.save(update_fields=['file_path', 'data_url'])
+    except Exception:
+        # Non-fatal: keep original record (data_url may be blank or non-data URL)
+        pass
     return Response(AttachmentSerializer(att).data, status=201)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def attachment_download(request, pk):
+    try:
+        att = Attachment.objects.get(pk=pk)
+    except Attachment.DoesNotExist:
+        return Response({'error': 'Not found.'}, status=404)
+    if not att.file_path:
+        return Response({'error': 'File not available.'}, status=404)
+    if not os.path.exists(att.file_path):
+        return Response({'error': 'File missing on server.'}, status=404)
+    return FileResponse(open(att.file_path, 'rb'), as_attachment=True, filename=att.name or f'attachment_{att.id}')
 
 
 # ─── Purchase Orders ──────────────────────────────────────────────────────────
 
 @api_view(['GET'])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
 def purchase_order_list(request):
     qs = PurchaseOrder.objects.select_related('requisition').prefetch_related('items').all()
     paginator = StandardPagination()
@@ -361,7 +485,7 @@ def purchase_order_list(request):
 
 
 @api_view(['GET', 'PATCH'])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
 def purchase_order_detail(request, pk):
     try:
         po = PurchaseOrder.objects.select_related('requisition').prefetch_related('items').get(pk=pk)
@@ -377,7 +501,7 @@ def purchase_order_detail(request, pk):
 
 
 @api_view(['POST'])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
 def generate_po(request, req_pk):
     """Generate a PurchaseOrder from a Requisition."""
     try:
@@ -443,9 +567,7 @@ def generate_po(request, req_pk):
         req.po_number = po_number
         req.save(update_fields=['po_generated', 'po_number', 'updated_at'])
 
-        _log_audit(req, data.get('actor_user_id'), data.get('actor_user_name', ''),
-                   data.get('actor_user_role', ''), 'Purchase Order Generated',
-                   f"{po_number} generated for {req.req_number}.")
+        _log_audit(request, req, 'Purchase Order Generated', f"{po_number} generated for {req.req_number}.")
 
     return Response(PurchaseOrderSerializer(po).data, status=201)
 
@@ -453,7 +575,7 @@ def generate_po(request, req_pk):
 # ─── Notifications ────────────────────────────────────────────────────────────
 
 @api_view(['GET', 'POST'])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
 def notification_list(request):
     if request.method == 'GET':
         recipient_id = request.query_params.get('recipient_id')
@@ -480,7 +602,7 @@ def notification_list(request):
 
 
 @api_view(['PATCH'])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
 def notification_mark_read(request, pk):
     try:
         notif = AppNotification.objects.get(pk=pk)
@@ -492,7 +614,7 @@ def notification_mark_read(request, pk):
 
 
 @api_view(['POST'])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
 def notification_mark_all_read(request):
     recipient_id = request.data.get('recipient_id')
     if not recipient_id:
@@ -504,7 +626,7 @@ def notification_mark_all_read(request):
 # ─── Delegations ──────────────────────────────────────────────────────────────
 
 @api_view(['GET', 'POST'])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
 def delegation_list(request):
     if request.method == 'GET':
         qs = DelegationRecord.objects.select_related('from_user', 'to_user').all()
@@ -517,7 +639,7 @@ def delegation_list(request):
 
 
 @api_view(['PATCH'])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
 def delegation_detail(request, pk):
     try:
         record = DelegationRecord.objects.get(pk=pk)
@@ -572,26 +694,26 @@ def _filter_audit_queryset(qs, request):
     return qs
 
 
-def _log_audit(requisition, user_id, user_name, user_role, action, details):
-    user = None
-    if user_id:
-        try:
-            user = User.objects.get(pk=user_id)
-        except (User.DoesNotExist, ValueError):
-            pass
+def _log_audit(request, requisition, action, details):
+    """Server-owned audit logging: derive actor from authenticated request."""
+    user = getattr(request, 'user', None)
+    roles = []
+    if user and getattr(user, 'id', None) and hasattr(user, 'roles'):
+        roles = list(user.roles.values_list('role', flat=True))
+    primary_role = roles[0] if roles else ''
     AuditEntry.objects.create(
         action=action,
-        user=user,
-        user_id_str=str(user_id) if user_id else '',
-        user_name=user_name,
-        user_role=user_role,
+        user=user if getattr(user, 'id', None) else None,
+        user_id_str=str(getattr(user, 'id', '') or ''),
+        user_name=getattr(user, 'name', '') or '',
+        user_role=primary_role,
         details=details,
         requisition=requisition,
     )
 
 
 @api_view(['GET'])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated, IsAuditorOrFinancialController])
 def audit_list(request):
     qs = AuditEntry.objects.select_related('requisition').all().order_by('-timestamp')
     qs = _filter_audit_queryset(qs, request)
@@ -605,7 +727,7 @@ def audit_list(request):
 
 
 @api_view(['GET'])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated, IsAuditorOrFinancialController])
 def audit_requisitions_list(request):
     """One row per requisition: latest activity and action count. For audit trail summary view."""
     qs = (
@@ -652,7 +774,7 @@ def audit_requisitions_list(request):
 
 
 @api_view(['GET'])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated, IsAuditorOrFinancialController])
 def audit_export_csv(request):
     qs = AuditEntry.objects.select_related('requisition').all().order_by('-timestamp')
     qs = _filter_audit_queryset(qs, request)
@@ -673,13 +795,13 @@ def audit_export_csv(request):
 # ─── SMTP / Email notifications ───────────────────────────────────────────────
 
 @api_view(['GET'])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated, IsSystemAdministrator])
 def smtp_settings_get(request):
     return Response(get_smtp_config_public())
 
 
 @api_view(['POST'])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated, IsSystemAdministrator])
 def smtp_settings_save(request):
     data = request.data
     host = data.get('host', '').strip()
@@ -697,11 +819,12 @@ def smtp_settings_save(request):
 
 
 @api_view(['POST'])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
 def send_notification_email(request):
     to_email = (request.data.get('to_email') or '').strip()
     subject = (request.data.get('subject') or 'Notification').strip()
     body = (request.data.get('body') or '').strip()
+    body_html = (request.data.get('body_html') or '').strip()
     if not to_email or '@' not in to_email:
         return Response({'sent': False, 'error': 'Valid to_email required.'}, status=400)
     config = get_smtp_config()
@@ -716,8 +839,62 @@ def send_notification_email(request):
             password=config.get('password') or None,
             use_tls=config.get('use_tls', True), fail_silently=False,
         )
-        from django.core.mail import EmailMessage
-        msg = EmailMessage(subject=subject, body=body, from_email=from_email, to=[to_email], connection=conn)
+        from django.core.mail import EmailMessage, EmailMultiAlternatives
+        if body_html:
+            msg = EmailMultiAlternatives(subject=subject, body=body or 'View this email in HTML.', from_email=from_email, to=[to_email], connection=conn)
+            msg.attach_alternative(body_html, 'text/html')
+        else:
+            msg = EmailMessage(subject=subject, body=body, from_email=from_email, to=[to_email], connection=conn)
+        msg.send()
+        return Response({'sent': True})
+    except Exception as e:
+        return Response({'sent': False, 'error': str(e)}, status=500)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def send_requisition_notification_email(request):
+    """
+    Send a formatted HTML email with requisition summary (Internal Requisition Number, Purpose, items, etc.).
+    """
+    to_email = (request.data.get('to_email') or '').strip()
+    subject = (request.data.get('subject') or 'Requisition notification').strip()
+    headline = (request.data.get('headline') or '').strip()
+    status_stage = (request.data.get('status_stage') or 'PendingAction').strip()
+    try:
+        req_pk = int(request.data.get('requisition_id'))
+    except (TypeError, ValueError):
+        return Response({'sent': False, 'error': 'requisition_id required.'}, status=400)
+    if not to_email or '@' not in to_email:
+        return Response({'sent': False, 'error': 'Valid to_email required.'}, status=400)
+    if not headline:
+        return Response({'sent': False, 'error': 'headline required.'}, status=400)
+    try:
+        req = Requisition.objects.select_related('requester').prefetch_related('items').get(pk=req_pk)
+    except Requisition.DoesNotExist:
+        return Response({'sent': False, 'error': 'Requisition not found.'}, status=404)
+    config = get_smtp_config()
+    if not config:
+        return Response({'sent': False, 'reason': 'SMTP not configured.'})
+    login_url = (request.data.get('login_url') or '').strip()
+    if not login_url:
+        login_url = f"{settings.FRONTEND_BASE_URL}/login"
+    system_name = getattr(settings, 'REQUISITION_EMAIL_SYSTEM_NAME', 'Internal Requisition System')
+    plain, html_body = build_requisition_notification_html(
+        req, headline=headline, status_stage=status_stage, login_url=login_url, system_name=system_name,
+    )
+    from_email = config.get('from_email') or config.get('username') or 'noreply@localhost'
+    try:
+        conn = get_connection(
+            backend='django.core.mail.backends.smtp.EmailBackend',
+            host=config.get('host'), port=config.get('port', 587),
+            username=config.get('username') or None,
+            password=config.get('password') or None,
+            use_tls=config.get('use_tls', True), fail_silently=False,
+        )
+        from django.core.mail import EmailMultiAlternatives
+        msg = EmailMultiAlternatives(subject=subject, body=plain, from_email=from_email, to=[to_email], connection=conn)
+        msg.attach_alternative(html_body, 'text/html')
         msg.send()
         return Response({'sent': True})
     except Exception as e:

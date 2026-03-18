@@ -11,7 +11,7 @@ import { FileSpreadsheet, FileText } from 'lucide-react';
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-6">
       <h3 className="text-slate-800 mb-4 pb-3 border-b border-slate-100">{title}</h3>
       {children}
     </div>
@@ -20,8 +20,8 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="flex items-start gap-2 py-1.5">
-      <span className="text-slate-500 text-sm w-44 shrink-0">{label}</span>
+    <div className="flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-2 py-1.5">
+      <span className="text-slate-500 text-sm sm:w-44 shrink-0">{label}</span>
       <span className="text-slate-800 text-sm flex-1">{value || '—'}</span>
     </div>
   );
@@ -164,8 +164,8 @@ export function RequisitionDetail() {
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       {/* Header */}
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex items-center gap-4">
+      <div className="flex items-start justify-between gap-4 flex-col sm:flex-row">
+        <div className="flex items-center gap-3 sm:gap-4">
           <button
             onClick={() => navigate(-1)}
             className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-all"
@@ -181,13 +181,13 @@ export function RequisitionDetail() {
             <p className="text-slate-500 text-sm mt-0.5">{req.type} · {req.department}</p>
           </div>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
           {req.poGenerated && req.poNumber && (() => {
             const linkedPO = purchaseOrders.find((po) => po.requisitionId === req.id);
             return (
               <button
                 onClick={() => navigate('/purchase-orders', { state: linkedPO ? { openPoId: linkedPO.id } : undefined })}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border border-green-300 text-green-700 bg-green-50 hover:bg-green-100 transition-all"
+                className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border border-green-300 text-green-700 bg-green-50 hover:bg-green-100 transition-all w-full sm:w-auto"
               >
                 📄 View PO: {req.poNumber}
               </button>
@@ -197,13 +197,13 @@ export function RequisitionDetail() {
             <>
               <button
                 onClick={() => navigate(`/requisitions/${req.id}/edit`)}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border border-slate-300 text-slate-700 hover:bg-slate-50 transition-all"
+                className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border border-slate-300 text-slate-700 hover:bg-slate-50 transition-all w-full sm:w-auto"
               >
                 ✏️ Edit Draft
               </button>
               <button
                 onClick={() => void submitRequisition(req.id, currentUser)}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white bg-mars-red hover:bg-mars-red-dark transition-all"
+                className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white bg-mars-red hover:bg-mars-red-dark transition-all w-full sm:w-auto"
               >
                 Submit for Approval
               </button>
@@ -212,7 +212,7 @@ export function RequisitionDetail() {
           {isRequester && req.status === 'Rejected' && (
             <button
               onClick={() => void returnRejectedToDraft(req.id, currentUser).then(() => navigate(`/requisitions/${req.id}/edit`))}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white bg-mars-red hover:bg-mars-red-dark transition-all"
+              className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white bg-mars-red hover:bg-mars-red-dark transition-all w-full sm:w-auto"
             >
               ✏️ Edit and resubmit
             </button>
@@ -220,7 +220,7 @@ export function RequisitionDetail() {
           {canCancel && !isAuditor && (
             <button
               onClick={() => setShowCancelModal(true)}
-              className="px-4 py-2 rounded-lg text-sm font-medium border border-mars-red/40 text-mars-red hover:bg-mars-red-muted transition-all"
+              className="px-4 py-2 rounded-lg text-sm font-medium border border-mars-red/40 text-mars-red hover:bg-mars-red-muted transition-all w-full sm:w-auto"
             >
               Cancel Requisition
             </button>

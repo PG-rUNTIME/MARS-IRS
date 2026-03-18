@@ -1,4 +1,5 @@
 from django.db import models
+import secrets
 
 
 class User(models.Model):
@@ -31,6 +32,19 @@ class User(models.Model):
 
     def __str__(self):
         return f"{self.name} <{self.email}>"
+
+    @property
+    def is_authenticated(self) -> bool:
+        """
+        DRF's IsAuthenticated permission checks this attribute.
+        Since we use a custom user model (not django.contrib.auth.User),
+        we provide the same interface.
+        """
+        return True
+
+    @property
+    def is_anonymous(self) -> bool:
+        return False
 
 
 class UserRole(models.Model):
@@ -163,6 +177,7 @@ class Attachment(models.Model):
     uploaded_by = models.CharField(max_length=255)
     uploaded_at = models.DateTimeField(auto_now_add=True)
     data_url = models.TextField(blank=True, default='')
+    file_path = models.CharField(max_length=512, blank=True, default='')
     is_proof_of_payment = models.BooleanField(default=False)
 
     class Meta:
@@ -170,6 +185,25 @@ class Attachment(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.requisition.req_number})"
+
+
+class ApiToken(models.Model):
+    """
+    Simple API token for the custom `core.User` (not Django's auth user).
+    Used for server-side authentication/authorization of API requests.
+    """
+    key = models.CharField(max_length=64, unique=True, db_index=True)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='api_tokens')
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    last_used_at = models.DateTimeField(null=True, blank=True, db_index=True)
+
+    @staticmethod
+    def generate_key() -> str:
+        # 32 bytes => 64 hex chars
+        return secrets.token_hex(32)
+
+    def __str__(self):
+        return f"token:{self.key[:6]}… for {self.user.email}"
 
 
 class POItem(models.Model):

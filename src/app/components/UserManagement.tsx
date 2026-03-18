@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useApp } from '../context/AppContext';
+import { useAuth } from '../context/AuthContext';
 import { formatDate } from './shared/StatusBadge';
 import type { User, UserRole } from '../data/types';
 import { ROLE_CAPABILITIES } from '../data/roleCapabilities';
@@ -24,7 +25,8 @@ const EMPTY_USER: Omit<User, 'id'> & { password: string } = {
 };
 
 export function UserManagement() {
-  const { users, updateUser, toggleUserActive, addUser } = useApp();
+  const { users, updateUser, toggleUserActive, addUser, resetAccount } = useApp();
+  const { currentUser } = useAuth();
   const [search, setSearch] = useState('');
   const [filterRole, setFilterRole] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -33,6 +35,7 @@ export function UserManagement() {
   const [newUser, setNewUser] = useState<Omit<User, 'id'> & { password: string }>(EMPTY_USER);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saved, setSaved] = useState(false);
+  const [banner, setBanner] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
 
   const filtered = users.filter((u) => {
     if (search && !u.name.toLowerCase().includes(search.toLowerCase()) && !u.email.toLowerCase().includes(search.toLowerCase())) return false;
@@ -70,6 +73,8 @@ export function UserManagement() {
 
   const inputCls = 'w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:border-red-300 bg-white';
 
+  const canReset = !!currentUser?.roles?.includes('System Administrator');
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
@@ -90,6 +95,25 @@ export function UserManagement() {
         <div className="bg-green-50 border border-green-200 rounded-xl p-3 flex items-center gap-2 text-green-800 text-sm">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12"/></svg>
           Changes saved successfully.
+        </div>
+      )}
+
+      {banner && (
+        <div className={`border rounded-xl p-3 flex items-center gap-2 text-sm ${
+          banner.kind === 'success'
+            ? 'bg-green-50 border-green-200 text-green-800'
+            : 'bg-red-50 border-red-200 text-red-800'
+        }`}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            {banner.kind === 'success'
+              ? <polyline points="20 6 9 17 4 12"/>
+              : <>
+                  <circle cx="12" cy="12" r="10"/>
+                  <line x1="12" y1="8" x2="12" y2="12"/>
+                  <line x1="12" y1="16" x2="12.01" y2="16"/>
+                </>}
+          </svg>
+          {banner.text}
         </div>
       )}
 
@@ -196,12 +220,34 @@ export function UserManagement() {
                           <button onClick={() => { setEditingId(null); setEditData({}); setErrors({}); }} className="text-xs px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">Cancel</button>
                         </div>
                       ) : (
-                        <button
-                          onClick={() => { setEditingId(user.id); setEditData({ name: user.name, email: user.email, roles: user.roles, department: user.department }); }}
-                          className="text-xs px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:border-slate-300 hover:text-slate-800 transition-all"
-                        >
-                          Edit
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => { setEditingId(user.id); setEditData({ name: user.name, email: user.email, roles: user.roles, department: user.department }); }}
+                            className="text-xs px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:border-slate-300 hover:text-slate-800 transition-all"
+                          >
+                            Edit
+                          </button>
+                          {canReset && (
+                            <button
+                              onClick={async () => {
+                                if (!currentUser) return;
+                                const ok = window.confirm(`Reset account for ${user.name}?\n\nThis will reset their password to the default and force them to change it on next login.`);
+                                if (!ok) return;
+                                try {
+                                  await resetAccount(user.id, currentUser);
+                                  setBanner({ kind: 'success', text: `Account reset for ${user.name}. Default password restored and user will be forced to change it.` });
+                                } catch (e: any) {
+                                  setBanner({ kind: 'error', text: e?.message || 'Failed to reset account.' });
+                                } finally {
+                                  setTimeout(() => setBanner(null), 4000);
+                                }
+                              }}
+                              className="text-xs px-3 py-1.5 rounded-lg border border-red-200 text-red-700 hover:bg-red-50 transition-all"
+                            >
+                              Reset account
+                            </button>
+                          )}
+                        </div>
                       )}
                     </td>
                   </tr>

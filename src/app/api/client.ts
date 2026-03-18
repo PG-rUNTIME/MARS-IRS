@@ -9,10 +9,22 @@ export function getApiBase(): string { return API_BASE; }
 // Always enabled — nginx proxy handles routing in Docker; VITE_API_BASE handles local dev
 export function isApiEnabled(): boolean { return true; }
 
+const TOKEN_KEY = 'mars_irs_token';
+export function getAuthToken(): string | null {
+  return sessionStorage.getItem(TOKEN_KEY);
+}
+export function setAuthToken(token: string | null): void {
+  if (!token) sessionStorage.removeItem(TOKEN_KEY);
+  else sessionStorage.setItem(TOKEN_KEY, token);
+}
+
 async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const token = getAuthToken();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Token ${token}`;
   const res = await fetch(`${API_BASE}/api${path}`, {
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    headers: { ...headers, ...(options.headers || {}) },
     ...options,
   });
   if (!res.ok) {
@@ -44,6 +56,11 @@ export interface ApiUser {
   must_change_password: boolean;
   password_changed_at: string | null;
   roles: string[];
+}
+
+export interface LoginResponse {
+  token: string;
+  user: ApiUser;
 }
 
 export interface ApiApprovalStep {
@@ -210,11 +227,25 @@ export interface ApiDelegation {
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
 export function loginApi(email: string, password: string): Promise<ApiUser> {
-  return api('/auth/login/', { method: 'POST', body: JSON.stringify({ email, password }) });
+  return api('/auth/login/', { method: 'POST', body: JSON.stringify({ email, password }) }).then((r: any) => r as ApiUser);
 }
 
-export function verifyPassword(userId: string, password: string): Promise<{ valid: boolean }> {
-  return api('/auth/verify-password/', { method: 'POST', body: JSON.stringify({ user_id: userId, password }) });
+export function loginApiWithToken(email: string, password: string): Promise<LoginResponse> {
+  // use raw fetch so we don't require token for login
+  return fetch(`${API_BASE}/api/auth/login/`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  }).then(async (res) => {
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || data.detail || `API error ${res.status}`);
+    return data as LoginResponse;
+  });
+}
+
+export function verifyPassword(password: string): Promise<{ valid: boolean }> {
+  return api('/auth/verify-password/', { method: 'POST', body: JSON.stringify({ password }) });
 }
 
 // ─── Users ────────────────────────────────────────────────────────────────────
@@ -229,6 +260,14 @@ export function createUser(data: Partial<ApiUser> & { roles: string[] }): Promis
 
 export function updateUser(id: number, data: Partial<ApiUser>): Promise<ApiUser> {
   return api(`/users/${id}/`, { method: 'PATCH', body: JSON.stringify(data) });
+}
+
+export function resetUserAccount(id: number, data: {
+  actor_user_id?: number;
+  actor_user_name?: string;
+  actor_user_role?: string;
+}): Promise<ApiUser> {
+  return api(`/users/${id}/reset/`, { method: 'POST', body: JSON.stringify(data) });
 }
 
 // ─── Requisitions ─────────────────────────────────────────────────────────────
@@ -438,6 +477,32 @@ export function getAuditExportUrl(params: Omit<AuditListParams, 'page' | 'page_s
   return `${API_BASE}/api/audit/export/${q ? '?' + q : ''}`;
 }
 
+export async function downloadWithAuth(fullUrl: string, filename: string): Promise<void> {
+  const token = getAuthToken();
+  const headers: Record<string, string> = {};
+  if (token) headers['Authorization'] = `Token ${token}`;
+  const res = await fetch(fullUrl, { headers, credentials: 'include' });
+  if (!res.ok) {
+    let message = `Download failed (${res.status})`;
+    try {
+      const data = await res.json();
+      if (data?.error || data?.detail) message = data.error || data.detail;
+    } catch {
+      // ignore JSON parse errors
+    }
+    throw new Error(message);
+  }
+  const blob = await res.blob();
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.URL.revokeObjectURL(url);
+}
+
 // ─── Database health & backup ─────────────────────────────────────────────────
 
 export interface DatabaseHealthResponse { status: 'ok' | 'error'; database?: string; version?: string; error?: string; }
@@ -463,9 +528,13 @@ export function getBackupDownloadUrl(filename: string): string {
 export function uploadAndRestoreBackup(file: File): Promise<{ status: string; message?: string; error?: string }> {
   const form = new FormData();
   form.append('file', file);
+  const token = getAuthToken();
+  const headers: Record<string, string> = {};
+  if (token) headers['Authorization'] = `Token ${token}`;
   return fetch(`${API_BASE}/api/database/backups/upload-restore/`, {
     method: 'POST',
     credentials: 'include',
+    headers,
     body: form,
   }).then(async (res) => {
     const data = await res.json().catch(() => ({}));
@@ -486,11 +555,26 @@ export function saveSmtpSettings(data: SmtpSettingsSave): Promise<SmtpSettingsPu
   return api('/settings/smtp/save/', { method: 'POST', body: JSON.stringify(data) });
 }
 
-/** Fire-and-forget notification email. */
+/** Fire-and-forget notification email (uses same /api base as other calls; API_BASE may be empty). */
 export function sendNotificationEmail(to_email: string, subject: string, body: string): void {
-  if (!API_BASE || !to_email || !to_email.includes('@')) return;
+  if (!to_email?.trim() || !to_email.includes('@')) return;
   api('/notifications/send-email/', {
     method: 'POST',
     body: JSON.stringify({ to_email, subject, body }),
+  }).catch(() => {});
+}
+
+/** HTML table-style requisition summary email (SMTP must be configured). */
+export function sendRequisitionNotificationEmail(params: {
+  to_email: string;
+  requisition_id: number;
+  subject: string;
+  headline: string;
+  status_stage: string;
+}): void {
+  if (!params.to_email?.trim() || !params.to_email.includes('@')) return;
+  api('/notifications/send-requisition-email/', {
+    method: 'POST',
+    body: JSON.stringify(params),
   }).catch(() => {});
 }

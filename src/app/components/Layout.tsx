@@ -54,7 +54,7 @@ function ChangePasswordModal({
     setSaving(true);
     try {
       if (!required) {
-        const { valid } = await verifyPassword(currentUser.id, currentPassword);
+        const { valid } = await verifyPassword(currentPassword);
         if (!valid) {
           setError('Current password is incorrect.');
           setSaving(false);
@@ -359,7 +359,7 @@ export function Layout({ onLogout }: { onLogout: () => void }) {
       {/* Main Content — ml-60 on desktop to sit beside fixed sidebar */}
       <div className="flex-1 flex flex-col overflow-hidden lg:ml-60 min-w-0">
         {/* Top Bar */}
-        <header className="bg-white border-b border-slate-200 px-6 py-3.5 flex items-center justify-between shrink-0 print:hidden">
+        <header className="bg-white border-b border-slate-200 px-4 sm:px-6 py-3 flex items-center justify-between shrink-0 print:hidden">
           <button className="lg:hidden p-1 text-slate-600 hover:text-slate-800" onClick={() => setSidebarOpen(true)}>
             <MenuIcon />
           </button>
@@ -386,7 +386,7 @@ export function Layout({ onLogout }: { onLogout: () => void }) {
         </header>
 
         {/* Page Content — single scroll container: min-h-0 lets flex child shrink so overflow-y-auto works; stays scrollable after file upload/reflow */}
-        <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-6" style={{ WebkitOverflowScrolling: 'touch' } as React.CSSProperties}>
+        <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4 sm:p-6" style={{ WebkitOverflowScrolling: 'touch' } as React.CSSProperties}>
           <Outlet />
         </main>
       </div>

@@ -4,6 +4,9 @@ import {
   fetchBackupList,
   createBackup,
   restoreBackup,
+  uploadAndRestoreBackup,
+  getBackupDownloadUrl,
+  downloadWithAuth,
   type BackupItem,
 } from '../api/client';
 
@@ -31,6 +34,7 @@ export function DatabaseHealthBackup() {
   const [backupName, setBackupName] = useState('');
   const [creating, setCreating] = useState(false);
   const [restoring, setRestoring] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [restoreConfirm, setRestoreConfirm] = useState<string | null>(null);
 
@@ -93,6 +97,27 @@ export function DatabaseHealthBackup() {
       setMessage({ type: 'error', text: String(e) });
     } finally {
       setRestoring(null);
+    }
+  };
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    setUploading(true);
+    setMessage(null);
+    try {
+      const res = await uploadAndRestoreBackup(file);
+      if (res.status === 'ok') {
+        setMessage({ type: 'success', text: res.message || 'Backup uploaded and database restored successfully.' });
+        loadBackups();
+      } else {
+        setMessage({ type: 'error', text: res.error || 'Upload/restore failed.' });
+      }
+    } catch (err) {
+      setMessage({ type: 'error', text: (err as Error).message || String(err) });
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -177,13 +202,30 @@ export function DatabaseHealthBackup() {
         </div>
       </div>
 
-      {/* Backup list & restore */}
+      {/* Backup list, download & restore */}
       <div className="bg-white rounded-xl border border-border shadow-sm p-6">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-foreground font-semibold">Backups</h2>
-          <button type="button" onClick={loadBackups} className="text-sm text-mars-red hover:underline">
-            Refresh list
-          </button>
+        <div className="flex items-start justify-between gap-3 mb-3 flex-col md:flex-row">
+          <div>
+            <h2 className="text-foreground font-semibold">Backups</h2>
+            <p className="text-muted-foreground text-xs mt-0.5">
+              Download existing backups, or upload a .sql file to restore.
+            </p>
+          </div>
+          <div className="flex items-center gap-3 flex-wrap">
+            <button type="button" onClick={loadBackups} className="text-sm text-mars-red hover:underline">
+              Refresh list
+            </button>
+            <label className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 text-slate-700 text-xs cursor-pointer hover:bg-slate-50">
+              {uploading ? 'Uploading…' : 'Upload & restore (.sql)'}
+              <input
+                type="file"
+                accept=".sql"
+                className="sr-only"
+                disabled={uploading}
+                onChange={handleUpload}
+              />
+            </label>
+          </div>
         </div>
         {loadingBackups ? (
           <p className="text-muted-foreground text-sm">Loading…</p>
@@ -207,35 +249,51 @@ export function DatabaseHealthBackup() {
                     <td className="py-3 text-muted-foreground">{formatBytes(b.size_bytes)}</td>
                     <td className="py-3 text-muted-foreground">{formatDate(b.created)}</td>
                     <td className="py-3 text-right">
-                      {restoreConfirm === b.filename ? (
-                        <span className="flex items-center justify-end gap-2">
-                          <span className="text-amber-700 text-xs">Restore this? </span>
-                          <button
-                            type="button"
-                            onClick={() => handleRestore(b.filename)}
-                            disabled={restoring !== null}
-                            className="text-xs px-2 py-1 rounded bg-mars-red text-white hover:bg-mars-red-dark disabled:opacity-60"
-                          >
-                            Yes
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setRestoreConfirm(null)}
-                            className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:bg-muted"
-                          >
-                            No
-                          </button>
-                        </span>
-                      ) : (
+                      <div className="flex items-center justify-end gap-2">
                         <button
                           type="button"
-                          onClick={() => setRestoreConfirm(b.filename)}
-                          disabled={restoring !== null}
-                          className="text-xs px-2 py-1.5 rounded border border-mars-red text-mars-red hover:bg-mars-red-muted disabled:opacity-60"
+                          className="text-xs px-2 py-1.5 rounded border border-slate-200 text-slate-700 hover:bg-slate-50"
+                          onClick={() => {
+                            void downloadWithAuth(
+                              getBackupDownloadUrl(b.filename),
+                              b.filename
+                            ).catch((e) => {
+                              alert(e instanceof Error ? e.message : String(e));
+                            });
+                          }}
                         >
-                          {restoring === b.filename ? 'Restoring…' : 'Restore'}
+                          Download
                         </button>
-                      )}
+                        {restoreConfirm === b.filename ? (
+                          <span className="flex items-center justify-end gap-2">
+                            <span className="text-amber-700 text-xs">Restore this?</span>
+                            <button
+                              type="button"
+                              onClick={() => handleRestore(b.filename)}
+                              disabled={restoring !== null}
+                              className="text-xs px-2 py-1 rounded bg-mars-red text-white hover:bg-mars-red-dark disabled:opacity-60"
+                            >
+                              Yes
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setRestoreConfirm(null)}
+                              className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:bg-muted"
+                            >
+                              No
+                            </button>
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setRestoreConfirm(b.filename)}
+                            disabled={restoring !== null}
+                            className="text-xs px-2 py-1.5 rounded border border-mars-red text-mars-red hover:bg-mars-red-muted disabled:opacity-60"
+                          >
+                            {restoring === b.filename ? 'Restoring…' : 'Restore'}
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}

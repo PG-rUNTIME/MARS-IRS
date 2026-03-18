@@ -102,22 +102,22 @@ export function RequisitionList({ mode }: RequisitionListProps) {
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-start sm:items-center justify-between flex-col sm:flex-row gap-3">
         <div>
           <h1 className="text-slate-900">{title}</h1>
           <p className="text-slate-500 text-sm">{subtitle}</p>
         </div>
-        <div className="flex items-center gap-3 flex-wrap">
-          <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3 flex-wrap w-full sm:w-auto">
+          <div className="flex items-center gap-2 w-full sm:w-auto">
             <label className="text-slate-500 text-xs">From</label>
-            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="px-2 py-1.5 border border-slate-200 rounded-lg text-sm" />
+            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="px-2 py-1.5 border border-slate-200 rounded-lg text-sm w-full sm:w-auto" />
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 w-full sm:w-auto">
             <label className="text-slate-500 text-xs">To</label>
-            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="px-2 py-1.5 border border-slate-200 rounded-lg text-sm" />
+            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="px-2 py-1.5 border border-slate-200 rounded-lg text-sm w-full sm:w-auto" />
           </div>
-          <button type="button" onClick={handleExportExcel} className="px-3 py-2 rounded-lg border border-slate-200 text-slate-600 text-sm hover:bg-slate-50">Export Excel</button>
-          <button type="button" onClick={handleExportWord} className="px-3 py-2 rounded-lg border border-slate-200 text-slate-600 text-sm hover:bg-slate-50">Export Word</button>
+          <button type="button" onClick={handleExportExcel} className="px-3 py-2 rounded-lg border border-slate-200 text-slate-600 text-sm hover:bg-slate-50 w-full sm:w-auto">Export Excel</button>
+          <button type="button" onClick={handleExportWord} className="px-3 py-2 rounded-lg border border-slate-200 text-slate-600 text-sm hover:bg-slate-50 w-full sm:w-auto">Export Word</button>
           <div className="text-right hidden md:block">
             <div className="text-slate-500 text-xs">Total Value</div>
             <div className="text-slate-900 font-bold text-sm">
@@ -128,7 +128,7 @@ export function RequisitionList({ mode }: RequisitionListProps) {
           {(mode === 'my' || !currentUser.roles.includes('Auditor')) && mode !== 'pending' && (
             <button
               onClick={() => navigate('/requisitions/new')}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg text-white text-sm font-medium transition-all hover:opacity-90 bg-mars-red hover:bg-mars-red-dark"
+              className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-white text-sm font-medium transition-all hover:opacity-90 bg-mars-red hover:bg-mars-red-dark w-full sm:w-auto"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
               New Requisition

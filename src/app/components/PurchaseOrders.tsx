@@ -172,7 +172,7 @@ export function PurchaseOrders() {
   if (selectedPO) {
     return (
       <div className="max-w-4xl mx-auto space-y-5">
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-4 flex-wrap">
           <button
             onClick={() => setSelected(null)}
             className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-all"
@@ -183,17 +183,17 @@ export function PurchaseOrders() {
             <h1 className="text-slate-900">{selectedPO.poNumber}</h1>
             <p className="text-slate-500 text-sm">Purchase Order · Linked to {selectedPO.reqNumber}</p>
           </div>
-          <div className="ml-auto flex gap-3">
+          <div className="ml-auto flex gap-3 flex-wrap w-full sm:w-auto">
             <button
               onClick={() => downloadPOAsPDF(selectedPO)}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-300 text-slate-600 text-sm hover:bg-slate-50 transition-all"
+              className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-slate-300 text-slate-600 text-sm hover:bg-slate-50 transition-all w-full sm:w-auto"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Download PDF
             </button>
             <button
               onClick={() => navigate(`/requisitions/${selectedPO.requisitionId}`)}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-300 text-slate-600 text-sm hover:bg-slate-50 transition-all"
+              className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-slate-300 text-slate-600 text-sm hover:bg-slate-50 transition-all w-full sm:w-auto"
             >
               View Requisition
             </button>
@@ -203,7 +203,7 @@ export function PurchaseOrders() {
         {/* PO Document */}
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
           {/* Header Band */}
-          <div className="px-8 py-6 bg-mars-navy">
+          <div className="px-4 sm:px-8 py-6 bg-mars-navy">
             <div className="flex items-start justify-between">
               <div>
                 <div className="flex items-center gap-3 mb-3">
@@ -228,9 +228,9 @@ export function PurchaseOrders() {
             </div>
           </div>
 
-          <div className="p-8 space-y-6">
+          <div className="p-4 sm:p-8 space-y-6">
             {/* Buyer/Supplier Grid */}
-            <div className="grid grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
               <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
                 <div className="text-slate-500 text-xs uppercase tracking-wide mb-3 font-medium">Buyer Details</div>
                 <div className="space-y-1">
@@ -290,7 +290,7 @@ export function PurchaseOrders() {
             </div>
 
             {/* Requester & Approvers */}
-            <div className="grid grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
               <div>
                 <div className="text-slate-500 text-xs uppercase tracking-wide mb-2 font-medium">Requested By</div>
                 <div className="text-slate-800 text-sm">{selectedPO.requesterName}</div>

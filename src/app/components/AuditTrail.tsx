@@ -4,6 +4,7 @@ import {
   fetchAuditRequisitionsList,
   getAuditExportUrl,
   isApiEnabled as isAuditApiEnabled,
+  downloadWithAuth,
   type ApiAuditRequisitionSummary,
 } from '../api/client';
 import { useApp } from '../context/AppContext';
@@ -145,18 +146,18 @@ export function AuditTrail() {
 
   const handleExportExcel = () => {
     if (useApi) {
-      window.open(
-        getAuditExportUrl({
-          search: search || undefined,
-          action: filterAction || undefined,
-          role: filterRole || undefined,
-          user: filterUser || undefined,
-          requisition_id: filterRequisition || undefined,
-          date_from: dateFrom || undefined,
-          date_to: dateTo || undefined,
-        }),
-        '_blank'
-      );
+      const url = getAuditExportUrl({
+        search: search || undefined,
+        action: filterAction || undefined,
+        role: filterRole || undefined,
+        user: filterUser || undefined,
+        requisition_id: filterRequisition || undefined,
+        date_from: dateFrom || undefined,
+        date_to: dateTo || undefined,
+      });
+      void downloadWithAuth(url, `audit_trail_${new Date().toISOString().slice(0, 10)}.csv`).catch((e) => {
+        alert(e instanceof Error ? e.message : String(e));
+      });
     } else {
       exportToExcel(summaryHeaders, rowsForExport(rows), 'audit_trail_requisitions');
     }

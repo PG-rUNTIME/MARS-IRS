@@ -376,7 +376,7 @@ export function RequisitionForm() {
                 <span className="font-medium">Note:</span> Petty Cash in USD is limited to $200; in ZIG there is no limit. For higher USD amounts, select an appropriate requisition type.
               </div>
 
-              <section className="bg-white rounded-xl border border-slate-200 shadow-sm p-6" aria-label="Requisition type">
+              <section className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-6" aria-label="Requisition type">
                 <h2 className="text-slate-800 font-semibold text-base mb-4">Requisition Type</h2>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                   {TYPES.map((t) => (
@@ -389,7 +389,7 @@ export function RequisitionForm() {
                 </div>
               </section>
 
-              <section className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-5" aria-label="Core details">
+              <section className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-6 space-y-5" aria-label="Core details">
                 <h2 className="text-slate-800 font-semibold text-base">Core Details</h2>
 
                 <Field label="Description of Item/Service" required hint="Be specific about what is being requested.">
@@ -476,7 +476,7 @@ export function RequisitionForm() {
             <>
           {/* Line Items — mandatory for non-Petty-Cash */}
           {needsSupplier && (
-            <section className="bg-white rounded-xl border border-slate-200 shadow-sm p-6" aria-label="Line items">
+            <section className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-6" aria-label="Line items">
               <div className="flex items-start justify-between gap-3 mb-4">
                 <div>
                   <h2 className="text-slate-800 font-semibold text-base">Line Items <span className="text-red-500">*</span></h2>
@@ -606,7 +606,7 @@ export function RequisitionForm() {
 
           {/* Supporting Documents — Petty Cash only */}
           {!needsSupplier && (
-            <section className="bg-white rounded-xl border border-slate-200 shadow-sm p-6" aria-label="Supporting documents">
+            <section className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-6" aria-label="Supporting documents">
               <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
                 <div>
                   <h2 className="text-slate-800 font-semibold text-base">Supporting Documents</h2>

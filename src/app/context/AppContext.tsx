@@ -7,16 +7,23 @@ import { getPrimaryRole } from '../data/roleCapabilities';
 import {
   isApiEnabled,
   fetchUsers, createUser as apiCreateUser, updateUser as apiUpdateUser,
+  resetUserAccount as apiResetUserAccount,
   fetchRequisitions, fetchRequisition, createRequisition as apiCreateRequisition,
   updateRequisition as apiUpdateRequisition, addComment as apiAddComment,
   addAttachment as apiAddAttachment, generatePO as apiGeneratePO,
   fetchPurchaseOrders,
   fetchNotifications, createNotification as apiCreateNotification,
   markNotificationRead as apiMarkRead, markAllNotificationsRead as apiMarkAllRead,
-  sendNotificationEmail,
+  sendNotificationEmail, sendRequisitionNotificationEmail,
   type ApiUser, type ApiRequisition, type ApiPurchaseOrder,
   type ApiNotification, type ApiApprovalStep,
 } from '../api/client';
+
+/** Matches backend-style tokens e.g. AwaitingGeneralManagerApproval */
+function awaitingStageFromRole(role: string): string {
+  const safe = (role || '').replace(/[^a-zA-Z0-9]/g, '');
+  return safe ? `Awaiting${safe}Approval` : 'PendingAction';
+}
 
 // ─── Mappers: API → frontend types ────────────────────────────────────────────
 
@@ -228,6 +235,7 @@ interface AppContextValue {
   updateUser: (id: string, data: Partial<User> & { password?: string }) => Promise<void>;
   toggleUserActive: (id: string) => Promise<void>;
   addUser: (data: Omit<User, 'id'> & { password: string }) => Promise<void>;
+  resetAccount: (id: string, actor: Pick<User, 'id' | 'name' | 'roles'>) => Promise<void>;
 }
 
 const AppContext = createContext<AppContextValue>({} as AppContextValue);
@@ -275,6 +283,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const pushNotif = async (
     recipientId: string, title: string, message: string,
     type: AppNotification['type'], requisitionId?: string,
+    emailSummary?: { headline: string; statusStage: string } | null,
   ) => {
     if (!isApiEnabled()) return;
     try {
@@ -284,7 +293,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       });
       setNotifications(prev => [mapNotification(n), ...prev]);
       const recipient = users.find(u => u.id === recipientId);
-      if (recipient?.email) sendNotificationEmail(recipient.email, title, message);
+      if (recipient?.email) {
+        if (requisitionId && emailSummary) {
+          sendRequisitionNotificationEmail({
+            to_email: recipient.email,
+            requisition_id: Number(requisitionId),
+            subject: title,
+            headline: emailSummary.headline,
+            status_stage: emailSummary.statusStage,
+          });
+        } else {
+          sendNotificationEmail(recipient.email, title, message);
+        }
+      }
     } catch { /* non-fatal */ }
   };
 
@@ -329,8 +350,29 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       actor_user_name: currentUser.name,
       actor_user_role: getPrimaryRole(currentUser.roles),
     });
+    const createdId = String(created.id);
     setRequisitions(prev => [mapRequisition(created), ...prev]);
-    return String(created.id);
+
+    // Persist general attachments (used by Petty Cash) as proper Attachment records.
+    // Supplier-related documents are persisted server-side from `suppliers_json`.
+    const atts = (data.attachments || []) as Attachment[];
+    const toUpload = atts.filter((a) => {
+      const n = Number(a.id);
+      return !Number.isFinite(n) || n <= 0;
+    });
+    for (const a of toUpload) {
+      await apiAddAttachment(Number(createdId), {
+        name: a.name,
+        type: a.type || 'PDF',
+        size: a.size || '—',
+        uploaded_by: a.uploadedBy || currentUser.name,
+        data_url: a.dataUrl || '',
+        is_proof_of_payment: false,
+      });
+    }
+    if (toUpload.length) await refreshReq(createdId);
+
+    return createdId;
   };
 
   const updateRequisition = async (id: string, data: Partial<Requisition>, currentUser: User) => {
@@ -379,6 +421,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       actor_user_name: currentUser.name,
       actor_user_role: getPrimaryRole(currentUser.roles),
     });
+    // Persist any newly-added general attachments (Petty Cash) via the attachments API.
+    const atts = (data.attachments || []) as Attachment[];
+    const toUpload = atts.filter((a) => {
+      const n = Number(a.id);
+      return !Number.isFinite(n) || n <= 0;
+    });
+    for (const a of toUpload) {
+      await apiAddAttachment(Number(id), {
+        name: a.name,
+        type: a.type || 'PDF',
+        size: a.size || '—',
+        uploaded_by: a.uploadedBy || currentUser.name,
+        data_url: a.dataUrl || '',
+        is_proof_of_payment: false,
+      });
+    }
     await refreshReq(id);
   };
 
@@ -390,21 +448,54 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       req = mapRequisition(fresh);
     }
     const firstRole = req.approvalChain[0]?.role ?? null;
-    await apiUpdateRequisition(Number(id), {
-      status: 'Submitted', submitted_at: now(), current_approver_role: firstRole,
-      audit_action: 'Submitted',
-      audit_details: `Requisition ${req.reqNumber} submitted for approval.`,
-      actor_user_id: Number(currentUser.id),
-      actor_user_name: currentUser.name,
-      actor_user_role: getPrimaryRole(currentUser.roles),
-    });
-    await refreshReq(id);
+    try {
+      await apiUpdateRequisition(Number(id), {
+        status: 'Submitted', submitted_at: now(), current_approver_role: firstRole,
+        audit_action: 'Submitted',
+        audit_details: `Requisition ${req.reqNumber} submitted for approval.`,
+        actor_user_id: Number(currentUser.id),
+        actor_user_name: currentUser.name,
+        actor_user_role: getPrimaryRole(currentUser.roles),
+      });
+    } catch (e: any) {
+      throw new Error(`Failed to submit requisition (update): ${e?.message || 'Unknown error'}`);
+    }
+    try {
+      await refreshReq(id);
+    } catch (e: any) {
+      throw new Error(`Submitted, but failed to refresh requisition: ${e?.message || 'Unknown error'}`);
+    }
     if (firstRole) {
       for (const u of users.filter(u => u.roles.includes(firstRole as UserRole))) {
-        await pushNotif(u.id, `Pending Approval – ${req.reqNumber}`, `Requisition ${req.reqNumber} from ${currentUser.name} is awaiting ${firstRole} approval.`, 'approval', id);
+        try {
+          await pushNotif(
+            u.id,
+            `Pending Approval – ${req.reqNumber}`,
+            `Requisition ${req.reqNumber} from ${currentUser.name} is awaiting ${firstRole} approval.`,
+            'approval',
+            id,
+            { headline: 'An internal requisition requires your approval.', statusStage: awaitingStageFromRole(firstRole) },
+          );
+        } catch (e: any) {
+          throw new Error(`Submitted, but failed to notify approvers: ${e?.message || 'Unknown error'}`);
+        }
       }
     }
-    await pushNotif(currentUser.id, 'Requisition Submitted', `Your requisition ${req.reqNumber} has been submitted and is pending approval.`, 'submission', id);
+    try {
+      await pushNotif(
+        currentUser.id,
+        'Requisition Submitted',
+        `Your requisition ${req.reqNumber} has been submitted and is pending approval.`,
+        'submission',
+        id,
+        {
+          headline: 'Your internal requisition has been submitted.',
+          statusStage: firstRole ? awaitingStageFromRole(firstRole) : 'SubmittedPendingReview',
+        },
+      );
+    } catch (e: any) {
+      throw new Error(`Submitted, but failed to notify requester: ${e?.message || 'Unknown error'}`);
+    }
   };
 
   const approveStep = async (reqId: string, currentUser: User, comments: string) => {
@@ -460,18 +551,66 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       actor_user_name: currentUser.name,
       actor_user_role: getPrimaryRole(currentUser.roles),
     });
+    // Confirmation to the approver (also triggers email when SMTP is configured).
+    await pushNotif(
+      currentUser.id,
+      'Approval Recorded',
+      `You approved requisition ${req.reqNumber}.`,
+      'approval',
+      reqId,
+      {
+        headline: 'Your approval has been recorded for this internal requisition.',
+        statusStage:
+          newStatus === 'Pending Payment'
+            ? 'AwaitingPaymentProcessing'
+            : nextPending
+              ? awaitingStageFromRole(nextPending.role)
+              : 'FullyApproved',
+      },
+    );
     if (newStatus === 'Pending Payment') {
       const needsPO = (req.type === 'Supplier Payment (Normal)' || req.type === 'High-Value/CAPEX') && !req.poGenerated;
       if (needsPO) await generatePOInternal(reqId, currentUser);
-      await pushNotif(req.requesterId, 'Requisition Approved – Pending Payment', `Your requisition ${req.reqNumber} has been fully approved and is with the accountant for payment.`, 'approval', reqId);
+      await pushNotif(
+        req.requesterId,
+        'Requisition Approved – Pending Payment',
+        `Your requisition ${req.reqNumber} has been fully approved and is with the accountant for payment.`,
+        'approval',
+        reqId,
+        { headline: 'Your internal requisition has been approved.', statusStage: 'AwaitingPaymentProcessing' },
+      );
       for (const u of users.filter(u => u.roles.includes('Accountant') || u.roles.includes('Financial Controller'))) {
-        await pushNotif(u.id, 'Payment Required', `Requisition ${req.reqNumber} is pending payment.`, 'info', reqId);
+        await pushNotif(
+          u.id,
+          'Payment Required',
+          `Requisition ${req.reqNumber} is pending payment.`,
+          'info',
+          reqId,
+          { headline: 'An internal requisition is pending payment.', statusStage: 'AwaitingPaymentProcessing' },
+        );
       }
     } else if (nextPending) {
       for (const u of users.filter(u => u.roles.includes(nextPending.role as UserRole))) {
-        await pushNotif(u.id, `Pending Approval – ${req.reqNumber}`, `Requisition ${req.reqNumber} is awaiting ${nextPending.label} approval.`, 'approval', reqId);
+        await pushNotif(
+          u.id,
+          `Pending Approval – ${req.reqNumber}`,
+          `Requisition ${req.reqNumber} is awaiting ${nextPending.label} approval.`,
+          'approval',
+          reqId,
+          { headline: 'An internal requisition requires your approval.', statusStage: awaitingStageFromRole(nextPending.role) },
+        );
       }
-      await pushNotif(req.requesterId, 'Approval Progress', `Your requisition ${req.reqNumber} has been approved and forwarded to the next approver.`, 'approval', reqId);
+      await pushNotif(
+        req.requesterId,
+        'Approval Progress',
+        `Your requisition ${req.reqNumber} has been approved and forwarded to the next approver.`,
+        'approval',
+        reqId,
+        {
+          headline: 'Your internal requisition has been approved.',
+          statusStage: awaitingStageFromRole(nextPending.role),
+        },
+      );
     }
     await refreshReq(reqId);
   };
@@ -510,7 +649,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       actor_user_name: currentUser.name,
       actor_user_role: getPrimaryRole(currentUser.roles),
     });
-    await pushNotif(req.requesterId, 'Requisition Rejected', `Your requisition ${req.reqNumber} has been rejected. Reason: ${reason}. You can edit and resubmit.`, 'rejection', reqId);
+    await pushNotif(
+      req.requesterId,
+      'Requisition Rejected',
+      `Your requisition ${req.reqNumber} has been rejected. Reason: ${reason}. You can edit and resubmit.`,
+      'rejection',
+      reqId,
+      { headline: 'Your internal requisition has been rejected.', statusStage: 'RejectedEditAndResubmit' },
+    );
     await refreshReq(reqId);
   };
 
@@ -579,7 +725,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       actor_user_name: currentUser.name,
       actor_user_role: getPrimaryRole(currentUser.roles),
     });
-    await pushNotif(req.requesterId, 'Payment Completed', `Payment for your requisition ${req.reqNumber} has been processed.`, 'payment', reqId);
+    await pushNotif(
+      req.requesterId,
+      'Payment Completed',
+      `Payment for your requisition ${req.reqNumber} has been processed.`,
+      'payment',
+      reqId,
+      { headline: 'Payment has been completed for your internal requisition.', statusStage: 'Paid' },
+    );
     await refreshReq(reqId);
   };
 
@@ -599,7 +752,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       actor_user_name: currentUser.name,
       actor_user_role: getPrimaryRole(currentUser.roles),
     });
-    await pushNotif(req.requesterId, 'Payment Completed', `Payment for your requisition ${req.reqNumber} has been processed.`, 'payment', reqId);
+    await pushNotif(
+      req.requesterId,
+      'Payment Completed',
+      `Payment for your requisition ${req.reqNumber} has been processed.`,
+      'payment',
+      reqId,
+      { headline: 'Payment has been completed for your internal requisition.', statusStage: 'Paid' },
+    );
     await refreshReq(reqId);
   };
 
@@ -615,7 +775,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const generatePO = async (reqId: string, currentUser: User): Promise<string | null> => {
     const poNumber = await generatePOInternal(reqId, currentUser);
-    await pushNotif(currentUser.id, 'PO Generated', `Purchase Order ${poNumber} has been generated.`, 'info', reqId);
+    await pushNotif(
+      currentUser.id,
+      'PO Generated',
+      `Purchase Order ${poNumber} has been generated.`,
+      'info',
+      reqId,
+      {
+        headline: `Purchase Order ${poNumber} has been generated for your requisition.`,
+        statusStage: 'PurchaseOrderGenerated',
+      },
+    );
     await refreshReq(reqId);
     return poNumber;
   };
@@ -667,6 +837,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setUsers(prev => [...prev, mapUser(created)]);
   };
 
+  const resetAccount = async (id: string, actor: Pick<User, 'id' | 'name' | 'roles'>) => {
+    const updated = await apiResetUserAccount(Number(id), {
+      actor_user_id: Number(actor.id),
+      actor_user_name: actor.name,
+      actor_user_role: getPrimaryRole(actor.roles),
+    });
+    setUsers(prev => prev.map(u => u.id === id ? mapUser(updated) : u));
+  };
+
   return (
     <AppContext.Provider value={{
       requisitions, purchaseOrders, notifications, auditLog, users, loading, reload: loadAll,
@@ -675,6 +854,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       rejectRequisition, returnRejectedToDraft, cancelRequisition, addComment,
       markAsPendingPayment, markAsPaid, uploadProofOfPayment, generatePO,
       markNotificationRead, markAllRead, updateUser, toggleUserActive, addUser,
+      resetAccount,
     }}>
       {children}
     </AppContext.Provider>

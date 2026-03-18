@@ -1,191 +1,453 @@
-# MARS IRS – System Architecture
+# MARS IRS (Internal Requisition System)
 
-High-level architecture of the full system (frontend, backend, database) and main data flows.
+This repository contains the **MARS Internal Requisition System (IRS)**: a web app for raising internal requisitions (petty cash, supplier payments, high-value/CAPEX), routing them through an approval chain, tracking audit history, generating purchase orders (when applicable), and capturing proof-of-payment to complete the lifecycle.
 
----
-
-## High-level overview
-
-```mermaid
-flowchart TB
-  subgraph Client["🖥️ Client"]
-    Browser["Browser"]
-  end
-
-  subgraph Frontend["Frontend (Static)"]
-    SPA["React SPA\n(Vite build)"]
-    SPA --> Router["React Router"]
-    SPA --> Context["AppContext\n(in-memory state)"]
-    SPA --> API["API client\n(VITE_API_BASE)"]
-  end
-
-  subgraph Backend["Backend (Django)"]
-    API_GW["HTTP API"]
-    API_GW --> Auth["Auth / Sessions"]
-    API_GW --> ReqAPI["Requisitions API"]
-    API_GW --> POAPI["Purchase Orders API"]
-    API_GW --> AuditAPI["Audit API"]
-    API_GW --> DBAPI["Database / Backup API"]
-  end
-
-  subgraph Data["Data"]
-    PG[("PostgreSQL")]
-  end
-
-  Browser -->|HTTPS| SPA
-  API -->|REST / JSON| API_GW
-  Backend -->|SQL| PG
-```
+It is designed for **internal business operations**: requesters submit requisitions; approvers review/approve/reject; finance processes payment; auditors review history; administrators manage users and platform configuration (SMTP, database backup/restore).
 
 ---
 
-## Component diagram
+## Business requirements (what the system must do)
 
-```mermaid
-flowchart LR
-  subgraph Users
-    U1[Requester]
-    U2[Dept Manager]
-    U3[Accountant]
-    U4[GM / FC / Head of Ops]
-    U5[Auditor / Admin]
-  end
+### Core capabilities
 
-  subgraph Frontend["Frontend"]
-    UI[React UI\nLogin, Dashboard,\nRequisitions, PO, Reports]
-    State[AppContext\nRequisitions, POs,\nNotifications, Audit]
-    Client[API client\nAudit, DB health when\nVITE_API_BASE set]
-  end
+- **Raise requisitions** for:
+  - **Petty Cash**
+  - **Supplier Payment (Normal)**
+  - **High-Value / CAPEX**
+- **Capture request details** including purpose/justification, department, cost centre, currency, amount, and (for supplier flows) supplier details + line items.
+- **Attach supporting documents** (invoices, quotations, tax clearance, VAT cert, proof-of-payment, etc.).
+- **Submit for approval** and route through a **role-based approval chain**.
+- **Enforce approval lifecycle** (Draft → Submitted → Pending Review/Approval → Pending Payment → Paid; with Rejected / Cancelled options).
+- **Audit trail** of key actions (create, submit, approve, reject, payment, PO generation, account reset, etc.).
+- **Notifications**:
+  - In-app notifications to relevant users
+  - Optional **email notifications** (when SMTP configured) with a formatted requisition summary.
+- **Purchase Orders**:
+  - Generate a PO when supplier/high-value requisitions reach the right stage (as configured in the current logic).
+- **Administration**:
+  - User CRUD, account reset (restore default password + force change on next login)
+  - SMTP configuration
+  - Database health checks + backups (create/list/download/restore; includes upload/restore of .sql)
 
-  subgraph Backend["Backend (Django)"]
-    WSGI[WSGI / ASGI]
-    AuthB[Auth]
-    ReqB[Requisitions]
-    POB[Purchase Orders]
-    AuditB[Audit log]
-    DBHealth[DB health / backups]
-  end
+### Non-functional requirements
 
-  subgraph DB
-    PG[("PostgreSQL")]
-  end
-
-  Users --> UI
-  UI --> State
-  UI --> Client
-  Client -->|REST| WSGI
-  WSGI --> AuthB
-  WSGI --> ReqB
-  WSGI --> POB
-  WSGI --> AuditB
-  WSGI --> DBHealth
-  AuthB --> PG
-  ReqB --> PG
-  POB --> PG
-  AuditB --> PG
-  DBHealth --> PG
-```
+- **Simple deployment** using Docker Compose (frontend + backend + Postgres).
+- **Fast UI**: approvers can quickly review requisition details (including documents) before acting.
+- **Data durability**: requisitions are stored in PostgreSQL; attachments can be stored as files on disk with download URLs.
+- **Operational visibility**: database health and backup tools available (admin only).
 
 ---
 
-## Request flow (simplified)
+## Roles & responsibilities
 
-```mermaid
-sequenceDiagram
-  participant U as User (Browser)
-  participant F as Frontend (React)
-  participant B as Backend (Django)
-  participant D as PostgreSQL
+The system uses **users** with one or more **roles** (capabilities accumulate).
 
-  Note over F: In-memory mode (no VITE_API_BASE)
-  U->>F: Load app
-  F->>F: AppContext (requisitions, POs, audit)
-  U->>F: Create / approve / upload POP
-  F->>F: Update state only
-
-  Note over F,B: API mode (VITE_API_BASE set)
-  U->>F: Audit trail / DB health
-  F->>B: GET /api/audit/ or /api/database/health/
-  B->>D: Query
-  D-->>B: Rows
-  B-->>F: JSON
-  F-->>U: UI
-```
+| Role | Primary responsibilities |
+|------|--------------------------|
+| Requester | Create draft, attach docs, submit for approval, view status, respond to rejection, cancel own requests (where allowed). |
+| Department Manager | Approve/reject department-level requests; advance workflow. |
+| Accountant | Review/approve steps; manage payment stage; upload proof-of-payment; may trigger transitions to “Pending Payment”. |
+| General Manager / Financial Controller / Head of Operations | Approve later steps depending on requisition type and chain. |
+| Auditor | Read-only oversight (audit trails, requisition history). |
+| System Administrator | User management, SMTP settings, DB backups, account resets, platform admin tasks. |
 
 ---
 
-## Requisition lifecycle (logical flow)
+## Requisition lifecycle (how work flows)
+
+### State model (high-level)
 
 ```mermaid
 stateDiagram-v2
   [*] --> Draft
-  Draft --> Submitted: Submit
-  Submitted --> Pending_Review: Dept Manager approves
-  Pending_Review --> Pending_Approval: Accountant approves
-  Pending_Approval --> Pending_Approval: GM / FC approve (non–Petty Cash)
-  Pending_Approval --> Pending_Payment: Final approval\n(+ auto PO for Supplier/High-Value)
-  Pending_Payment --> Paid: Accountant uploads POP
-  Submitted --> Rejected: Reject
-  Rejected --> Draft: Return to draft
-  Draft --> Cancelled: Cancel
+
+  Draft --> Submitted: Submit for approval
+  Draft --> Cancelled: Cancel (requester)
+
+  Submitted --> Pending_Review: Approval step(s) advance
+  Pending_Review --> Pending_Approval: Further approvals required
+  Pending_Approval --> Pending_Payment: Fully approved
+  Pending_Payment --> Paid: Proof of Payment uploaded / payment completed
+
+  Submitted --> Rejected: Reject (approver)
+  Pending_Review --> Rejected: Reject (approver)
+  Pending_Approval --> Rejected: Reject (approver)
+
+  Rejected --> Draft: Return to draft + edit + resubmit
 ```
+
+### Approval chain (role-based)
+
+Approval steps are persisted on each requisition as an ordered chain. The current code builds chains based on requisition type (templates live in the frontend and are persisted to backend on create/update).
+
+```mermaid
+flowchart LR
+  R[Requester] -->|Submit| DM[Department Manager]
+  DM --> ACC[Accountant]
+  ACC --> APPR[Next approver role(s)\n(GM / FC / HoO ...)]
+  APPR --> FIN[Pending Payment\n(Accounting / Finance)]
+  FIN --> PAID[Paid\n(POP uploaded)]
+```
+
+### What approvers see before approving
+
+Approvers should be able to view:
+- Purpose (description + justification)
+- Supplier details and line items (if applicable)
+- Supporting documents
+- Approval chain and who has acted
+- Audit log entries
 
 ---
 
-## Deployment (Docker)
+## Notifications & email (in-app + SMTP)
+
+### In-app notifications
+
+Notifications are created server-side as `AppNotification` records and displayed in the UI. The frontend creates notifications for:
+- Request submission (to requester + first approver role)
+- Each approval step (to requester + next approver role)
+- Rejection (to requester)
+- Payment completion (to requester)
+- Miscellaneous events (e.g., PO generated)
+
+### Email notifications (optional)
+
+If SMTP is configured, the system sends notification emails. There are two kinds:
+
+- **Simple email**: subject + plain body (generic)
+- **Requisition HTML email**: subject + **HTML summary** laid out like a formal internal notification with a requisition summary table and line items
+
+The requisition email format includes:
+- A **headline** (e.g. “Your internal requisition has been approved.”)
+- A **stage token** (e.g. `AwaitingGeneralManagerApproval`)
+- A **Log in here** link (built using `FRONTEND_BASE_URL`)
+- A summary table (Requisition #, purpose, requester, date, totals)
+- Item list table (Description, Unit Price, Quantity, Amount)
+
+```mermaid
+sequenceDiagram
+  participant UI as Frontend (React)
+  participant API as Backend (Django)
+  participant SMTP as SMTP Server
+
+  UI->>API: POST /api/notifications/ (create in-app notification)
+  alt SMTP configured
+    UI->>API: POST /api/notifications/send-requisition-email/
+    API->>SMTP: Send HTML email (multipart)
+  else SMTP not configured
+    API-->>UI: sent=false, reason=SMTP not configured
+  end
+```
+
+### Email link configuration
+
+Set these backend environment variables:
+
+- `FRONTEND_BASE_URL` (**required for correct email login link**)  
+  Example: `https://irs.yourcompany.com` (no trailing slash)
+- `REQUISITION_EMAIL_SYSTEM_NAME` (optional)  
+  Example: `MARS Internal Requisition System`
+
+Docker Compose supports them via `.env` (see `docker.env.example`).
+
+---
+
+## System architecture
+
+### High-level overview
 
 ```mermaid
 flowchart TB
-  subgraph Docker["Docker"]
-    subgraph Frontend["Frontend container"]
-      FE["Frontend\nnginx serves dist"]
-    end
-    subgraph Backend["Backend container"]
-      BE["Backend\nbackend/Dockerfile"]
-    end
-    subgraph DB["PostgreSQL container"]
-      PG[("DB")]
-    end
+  subgraph Client["Client"]
+    Browser["Browser (Users)"]
   end
 
-  User["Users"] --> FE
-  FE -->|/api proxied or VITE_API_BASE| BE
-  BE --> PG
+  subgraph FE["Frontend (React SPA served by nginx)"]
+    SPA["UI (React)\nDashboard / Requisitions / Approvals / Admin"]
+    Ctx["AppContext\nstate + orchestration"]
+    ApiClient["API client\n(fetch wrapper)"]
+  end
+
+  subgraph BE["Backend (Django REST API)"]
+    Auth["Token auth\nAuthorization: Token <key>"]
+    Req["Requisitions API\ncreate/update/detail"]
+    Att["Attachments API\nupload/download"]
+    Notif["Notifications API\n+ SMTP email"]
+    Audit["Audit API\nread/export"]
+    DBTools["DB admin tools\nhealth + backup/restore"]
+  end
+
+  subgraph Data["Data layer"]
+    PG[("PostgreSQL")]
+    FS["File storage\n(media/attachments)"]
+  end
+
+  Browser --> SPA
+  SPA --> Ctx
+  Ctx --> ApiClient
+  ApiClient -->|/api| BE
+
+  Auth --> PG
+  Req --> PG
+  Notif --> PG
+  Audit --> PG
+  Att --> PG
+  Att --> FS
+  DBTools --> PG
+```
+
+### Deployment topology (Docker Compose)
+
+```mermaid
+flowchart TB
+  User["Users / Browser"] --> N["frontend (nginx)\n:5174"]
+  N -->|/api proxy| D["backend (Django)\n:8001 -> 8000"]
+  D --> P[("postgres\ninternal")]
+```
+
+### Key data model (conceptual ERD)
+
+```mermaid
+erDiagram
+  USER ||--o{ USERROLE : has
+  USER ||--o{ REQUISITION : requests
+  REQUISITION ||--o{ APPROVALSTEP : has
+  REQUISITION ||--o{ ATTACHMENT : has
+  REQUISITION ||--o{ REQCOMMENT : has
+  REQUISITION ||--o{ AUDITENTRY : logs
+  USER ||--o{ APPNOTIFICATION : receives
+  REQUISITION ||--o{ APPNOTIFICATION : relates
+  REQUISITION ||--|| PURCHASEORDER : generates
+
+  USER {
+    int id
+    string name
+    string email
+    bool active
+    bool must_change_password
+    date password_changed_at
+  }
+  REQUISITION {
+    int id
+    string req_number
+    string type
+    string status
+    string current_approver_role
+    decimal amount
+    string currency
+    datetime submitted_at
+    datetime paid_at
+  }
+  ATTACHMENT {
+    int id
+    string name
+    string data_url
+    string file_path
+    bool is_proof_of_payment
+  }
 ```
 
 ---
 
-## Ports used by the system
+## Folder & file layout (what lives where)
+
+### Repo structure (important paths)
+
+| Path | What it contains |
+|------|------------------|
+| `src/app/` | Frontend application code (React components, contexts, routes, API client). |
+| `src/app/components/` | UI screens (Dashboard, RequisitionForm/Detail/List, UserManagement, SMTP settings, Audit trail, etc.). |
+| `src/app/context/` | App state + workflows (submit, approve, reject, notify, upload POP). |
+| `src/app/api/client.ts` | API wrapper + typed endpoints; token header handling. |
+| `backend/` | Django project + app (`core`), migrations, settings. |
+| `backend/core/views.py` | API endpoints: auth, users, requisitions, attachments, notifications, audit, SMTP settings. |
+| `backend/core/models.py` | Data models (User, Requisition, ApprovalStep, Attachment, Notification, Audit, PO, etc.). |
+| `backend/core/serializers.py` | DRF serializers + password hashing helpers. |
+| `backend/core/requisition_email_html.py` | HTML email builder for formatted requisition notifications. |
+| `nginx.conf` | Frontend nginx config + `/api/` proxy; includes `client_max_body_size` for large payloads. |
+| `docker-compose.yml` | Local stack: Postgres + backend + frontend + pgAdmin. |
+| `Dockerfile.frontend` | Builds SPA and serves it via nginx. |
+| `docs/` | Deployment + architecture documentation (e.g. production checklist). |
+
+### Frontend “workflow brain”
+
+Most lifecycle actions are orchestrated from `src/app/context/AppContext.tsx`, including:
+- Draft create/update
+- Submit for approval
+- Approve / reject
+- Payment transitions + POP upload
+- Notification fan-out (in-app + optional email)
+
+### Backend responsibilities
+
+The backend is the system of record for:
+- Users & roles
+- Requisitions, steps, comments, attachments, notifications, audit log
+- SMTP send endpoints
+- DB admin endpoints
+
+---
+
+## Deployment options (how to run it)
+
+### Option A: Docker Compose (recommended)
+
+**Prerequisites**: Docker + Docker Compose.
+
+Run:
+
+```bash
+docker compose up --build -d
+```
+
+Services:
+- Frontend: `http://localhost:5174`
+- Backend API: `http://localhost:8001/api/`
+- pgAdmin: `http://localhost:5050`
+
+#### Configuring email login links (Docker)
+
+1) Copy `docker.env.example` to `.env` in the repo root:
+
+```bash
+cp docker.env.example .env
+```
+
+2) Edit `.env`:
+
+```bash
+FRONTEND_BASE_URL=https://irs.yourcompany.com
+REQUISITION_EMAIL_SYSTEM_NAME=MARS Internal Requisition System
+```
+
+3) Rebuild/restart:
+
+```bash
+docker compose up --build -d
+```
+
+### Option B: Local dev (no Docker)
+
+You can run backend + frontend directly on your machine (requires PostgreSQL or `DATABASE_URL`).
+
+Frontend:
+
+```bash
+npm install
+npm run dev
+```
+
+Backend (example, adjust env):
+
+```bash
+cd backend
+cp .env.example .env
+# edit DB_* and CORS_ALLOWED_ORIGINS
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python manage.py migrate
+python manage.py runserver 0.0.0.0:8000
+```
+
+### Option C: Production deployment
+
+Recommended production pattern:
+- Run the stack behind HTTPS (reverse proxy / ingress).
+- Set `DEBUG=False`, `SECRET_KEY`, `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`.
+- Configure SMTP using the admin UI (Email / SMTP settings).
+
+See `docs/PRODUCTION.md` for a checklist.
+
+---
+
+## Configuration reference
+
+### Frontend (build/runtime)
+
+- `VITE_API_BASE` (build-time; in Dockerfile frontend build args)  
+  - Empty string: frontend uses **same-origin `/api/`** (nginx proxy)  
+  - Non-empty: points to backend URL (e.g. `http://localhost:8001`)
+
+### Backend (environment)
+
+Common:
+- `DEBUG`
+- `SECRET_KEY`
+- `ALLOWED_HOSTS`
+- `CORS_ALLOWED_ORIGINS`
+- `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT` (or `DATABASE_URL`)
+
+Email notifications:
+- `FRONTEND_BASE_URL` (used for “Log in here” in emails)
+- `REQUISITION_EMAIL_SYSTEM_NAME` (label shown above the summary table)
+
+File storage:
+- `MEDIA_ROOT` (where attachments are stored when uploaded as base64 data URLs)
+
+---
+
+## Operational notes & troubleshooting
+
+### Attachments not visible to approvers
+
+Supporting documents must be persisted as `Attachment` records on the requisition. The system supports:
+- Supplier documents persisted server-side from `suppliers_json`
+- General attachments persisted via `POST /api/requisitions/<id>/attachments/`
+
+### Submit for approval fails on supplier flows
+
+Large payloads (documents embedded as base64) can be rejected by nginx if body size is too small. The frontend nginx config sets:
+
+- `client_max_body_size 20m;`
+
+If you increase attachment size, adjust that value accordingly.
+
+### SMTP configured but emails not received
+
+Check:
+- SMTP host/port/credentials in Email / SMTP settings
+- Firewall rules and TLS requirements
+- Backend logs for send errors
+- `FRONTEND_BASE_URL` correctness (login link)
+
+---
+
+## Security notes (important)
+
+The backend uses **token authentication** (`Authorization: Token <key>`). This repository is intended for **trusted internal environments**. If you plan to expose it publicly, you should harden:
+- Authorization checks on sensitive endpoints (ensure actions are tied to authenticated user + role)
+- Rate limiting and monitoring
+- Secure secret management
+
+See the “Important limitation: API authentication” section in `docs/PRODUCTION.md`.
+
+---
+
+## Ports
 
 | Port  | Component        | When / where |
 |-------|------------------|--------------|
-| **5173** | Frontend (Vite dev server) | Local dev: `npm run dev`. Default Vite port; may show 5174, 5175 if 5173 is in use. |
-| **5174** | Frontend (nginx) | Docker Compose: host port **5174** → container port 80. Access app at `http://localhost:5174`. |
-| **8000** | Backend (Django) | Inside backend container; also Django default when running `runserver` locally. |
-| **8001** | Backend (Django) | Docker Compose: host port **8001** → container 8000. Frontend (when built with `VITE_API_BASE=http://localhost:8001`) calls API at `http://localhost:8001`. |
-| **5432** | PostgreSQL       | DB listens on **5432** inside the `db` container. Not exposed to host in `docker-compose.yml`; only the backend container connects to it. If you run Postgres locally, it uses 5432 on the host. |
-
-**Summary**
-
-- **Docker Compose:** Use **5174** (frontend) and **8001** (backend) on your machine; Postgres is internal (5432).
-- **Local dev (no Docker):** Frontend **5173**, backend **8000**, Postgres **5432** (if running locally).
+| **5173** | Frontend (Vite dev server) | Local dev: `npm run dev`. |
+| **5174** | Frontend (nginx) | Docker Compose: host port **5174** → container port 80. |
+| **8000** | Backend (Django) | Inside backend container; also default `runserver` locally. |
+| **8001** | Backend (Django) | Docker Compose: host port **8001** → container 8000. |
+| **5050** | pgAdmin | Docker Compose: DB admin UI. |
+| **5432** | PostgreSQL | Inside `db` container; not exposed by default. |
 
 ---
 
-## File / repo layout (conceptual)
+## Quick start (copy/paste)
 
-| Layer      | Location        | Purpose |
-|-----------|------------------|--------|
-| Frontend  | `/` (repo root)  | Vite, React, Tailwind; `src/app/` (components, context, routes). |
-| Backend   | `/backend`       | Django app; `manage.py`, Dockerfile, entrypoint, migrations. |
-| Docs      | `/docs`          | Architecture, deploy guides. |
-| Docker    | `docker-compose.yml`, `Dockerfile.frontend` | Local run: db + backend + frontend. |
+```bash
+# 1) Run the stack
+docker compose up --build -d
 
----
+# 2) Open the app
+open http://localhost:5174
 
-## Summary
-
-- **Frontend:** Single-page app (React + Vite). Serves static assets; state in memory (AppContext) or via backend when `VITE_API_BASE` is set (audit, DB health).
-- **Backend:** Django HTTP API for auth, requisitions, POs, audit, DB health/backups. Writes to PostgreSQL.
-- **Database:** PostgreSQL; holds users, requisitions, approval chains, POs, audit log, attachments/POP metadata (and optionally file storage).
-- **Deployment:** Docker: frontend (nginx), backend (Django), PostgreSQL. Frontend build-time env `VITE_API_BASE` points to backend URL (empty when same-origin proxy).
+# 3) (Optional) set email link branding
+cp docker.env.example .env
+# edit .env -> FRONTEND_BASE_URL, REQUISITION_EMAIL_SYSTEM_NAME
+docker compose up --build -d
+```

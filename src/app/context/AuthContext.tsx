@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import type { User, UserRole } from '../data/types';
-import { isApiEnabled, loginApi, type ApiUser } from '../api/client';
+import { isApiEnabled, loginApiWithToken, setAuthToken, type ApiUser } from '../api/client';
 import { useApp } from './AppContext';
 
 function apiUserToUser(u: ApiUser): User {
@@ -67,7 +67,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const login = async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
     if (isApiEnabled()) {
       try {
-        const apiUser = await loginApi(email, password);
+        const { token, user: apiUser } = await loginApiWithToken(email, password);
+        setAuthToken(token);
         const id = String(apiUser.id);
         sessionStorage.setItem(SESSION_KEY, id);
         setCurrentUserId(id);
@@ -83,6 +84,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = () => {
     sessionStorage.removeItem(SESSION_KEY);
+    setAuthToken(null);
     setCurrentUserId(null);
     setCurrentUser(null);
   };

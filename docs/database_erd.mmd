@@ -1,0 +1,123 @@
+```mermaid
+erDiagram
+  CORE_USER ||--o{ CORE_USERROLE : has
+  CORE_USER ||--o{ CORE_REQUISITION : requests
+  CORE_USER ||--o{ CORE_APITOKEN : authenticates_with
+
+  CORE_REQUISITION ||--o{ CORE_APPROVALSTEP : has_steps
+  CORE_USER ||--o{ CORE_APPROVALSTEP : approves
+  CORE_USER ||--o{ CORE_APPROVALSTEP : delegated_to
+
+  CORE_REQUISITION ||--o{ CORE_REQCOMMENT : has_comments
+  CORE_USER ||--o{ CORE_REQCOMMENT : writes
+
+  CORE_REQUISITION ||--o{ CORE_ATTACHMENT : has_attachments
+
+  CORE_REQUISITION ||--o| CORE_PURCHASEORDER : generates
+  CORE_PURCHASEORDER ||--o{ CORE_POITEM : contains
+  CORE_REQUISITION ||--o{ CORE_POITEM : has_items
+
+  CORE_USER ||--o{ CORE_APPNOTIFICATION : receives
+  CORE_REQUISITION ||--o{ CORE_APPNOTIFICATION : relates_to
+
+  CORE_USER ||--o{ CORE_DELEGATIONRECORD : delegates_from
+  CORE_USER ||--o{ CORE_DELEGATIONRECORD : delegates_to
+
+  CORE_USER ||--o{ CORE_AUDITENTRY : actor
+  CORE_REQUISITION ||--o{ CORE_AUDITENTRY : audited
+
+  CORE_USER {
+    bigint id PK
+    string name
+    string email UK
+    bool active
+  }
+
+  CORE_USERROLE {
+    bigint id PK
+    bigint user_id FK
+    string role
+  }
+
+  CORE_APITOKEN {
+    bigint id PK
+    string key UK
+    bigint user_id FK
+    datetime created_at
+    datetime last_used_at
+  }
+
+  CORE_REQUISITION {
+    bigint id PK
+    string req_number UK
+    bigint requester_id FK
+    string status
+    string currency
+  }
+
+  CORE_APPROVALSTEP {
+    bigint id PK
+    bigint requisition_id FK
+    bigint approver_id FK
+    bigint delegated_to_id FK
+    string role
+    string status
+  }
+
+  CORE_REQCOMMENT {
+    bigint id PK
+    bigint requisition_id FK
+    bigint user_id FK
+    bool is_finance_note
+    datetime timestamp
+  }
+
+  CORE_ATTACHMENT {
+    bigint id PK
+    bigint requisition_id FK
+    string name
+    bool is_proof_of_payment
+    string data_url
+    string file_path
+  }
+
+  CORE_PURCHASEORDER {
+    bigint id PK
+    bigint requisition_id FK
+    string po_number UK
+    string status
+  }
+
+  CORE_POITEM {
+    bigint id PK
+    bigint requisition_id FK
+    bigint purchase_order_id FK
+    decimal unit_price
+    decimal line_total
+  }
+
+  CORE_APPNOTIFICATION {
+    bigint id PK
+    bigint recipient_id FK
+    bigint requisition_id FK
+    bool read
+    datetime timestamp
+  }
+
+  CORE_DELEGATIONRECORD {
+    bigint id PK
+    bigint from_user_id FK
+    bigint to_user_id FK
+    date start_date
+    date end_date
+    bool active
+  }
+
+  CORE_AUDITENTRY {
+    bigint id PK
+    bigint user_id FK
+    bigint requisition_id FK
+    string action
+    datetime timestamp
+  }
+```

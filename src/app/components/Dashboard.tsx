@@ -134,32 +134,32 @@ export function Dashboard() {
           <h1 className="text-slate-900">Dashboard</h1>
           <p className="text-slate-500 text-sm">Welcome back, {currentUser.name} · {currentUser.roles.join(', ')}</p>
         </div>
-        <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap w-full sm:w-auto">
           <div className="text-slate-500 text-sm hidden md:block">
             {new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 w-full sm:w-auto">
             <label className="text-slate-500 text-xs">From</label>
             <input
               type="date"
               value={dateFrom}
               onChange={(e) => setDateFrom(e.target.value)}
-              className="px-2 py-1.5 border border-slate-200 rounded-lg text-sm text-slate-700"
+              className="px-2 py-1.5 border border-slate-200 rounded-lg text-sm text-slate-700 w-full sm:w-auto"
             />
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 w-full sm:w-auto">
             <label className="text-slate-500 text-xs">To</label>
             <input
               type="date"
               value={dateTo}
               onChange={(e) => setDateTo(e.target.value)}
-              className="px-2 py-1.5 border border-slate-200 rounded-lg text-sm text-slate-700"
+              className="px-2 py-1.5 border border-slate-200 rounded-lg text-sm text-slate-700 w-full sm:w-auto"
             />
           </div>
           <button
             type="button"
             onClick={() => window.print()}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-300 text-slate-600 text-sm hover:bg-slate-50 transition-all print:hidden"
+            className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-slate-300 text-slate-600 text-sm hover:bg-slate-50 transition-all print:hidden w-full sm:w-auto"
           >
             <FileText className="size-4" />
             PDF
@@ -167,7 +167,7 @@ export function Dashboard() {
           <button
             type="button"
             onClick={handleExportExcel}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-300 text-slate-600 text-sm hover:bg-slate-50 transition-all print:hidden"
+            className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-slate-300 text-slate-600 text-sm hover:bg-slate-50 transition-all print:hidden w-full sm:w-auto"
           >
             <FileSpreadsheet className="size-4" />
             Excel
@@ -175,7 +175,7 @@ export function Dashboard() {
           <button
             type="button"
             onClick={handleExportWord}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-300 text-slate-600 text-sm hover:bg-slate-50 transition-all print:hidden"
+            className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-slate-300 text-slate-600 text-sm hover:bg-slate-50 transition-all print:hidden w-full sm:w-auto"
           >
             <Download className="size-4" />
             Word
