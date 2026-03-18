@@ -82,6 +82,45 @@ def verify_password(request):
     return Response({'valid': check_password(password, user.password)})
 
 
+def _send_account_email(user: User, plain_password: str | None, *, is_reset: bool = False) -> None:
+    """
+    Best-effort account email: sends login URL and initial password (if provided).
+    Does not raise on failure so user creation/reset still succeed even if SMTP is misconfigured.
+    """
+    if not user or not getattr(user, "email", None):
+        return
+    config = get_smtp_config()
+    if not config:
+        return
+    login_url = f"{settings.FRONTEND_BASE_URL}/login"
+    subject = "Your MARS IRS account has been reset" if is_reset else "Your MARS IRS account"
+    pw_line = f"\nTemporary password: {plain_password}\n" if plain_password else "\n"
+    body = (
+        f"Hello {user.name or user.email},\n\n"
+        f"An account has been {'reset' if is_reset else 'created'} for you in the MARS Internal Requisition System.\n\n"
+        f"Email: {user.email}\n"
+        f"{pw_line}"
+        f"Login URL: {login_url}\n\n"
+        "You will be asked to change this password after logging in.\n\n"
+        "If you did not expect this email, please contact your system administrator."
+    )
+    from_email = config.get('from_email') or config.get('username') or 'noreply@localhost'
+    try:
+        conn = get_connection(
+            backend='django.core.mail.backends.smtp.EmailBackend',
+            host=config.get('host'), port=config.get('port', 587),
+            username=config.get('username') or None,
+            password=config.get('password') or None,
+            use_tls=config.get('use_tls', True), fail_silently=False,
+        )
+        from django.core.mail import EmailMessage
+        msg = EmailMessage(subject=subject, body=body, from_email=from_email, to=[user.email], connection=conn)
+        msg.send()
+    except Exception:
+        # Non-fatal: just skip email if SMTP fails.
+        return
+
+
 # ─── Users ────────────────────────────────────────────────────────────────────
 
 @api_view(['GET', 'POST'])
@@ -94,7 +133,11 @@ def user_list(request):
         return Response({'error': 'Forbidden.'}, status=403)
     serializer = UserSerializer(data=request.data)
     if serializer.is_valid():
+        # Capture plain password before serializer hashes it so we can email it to the user.
+        plain_pw = (serializer.initial_data.get('password') or '').strip()
         user = serializer.save()
+        # Fire-and-forget account email (if SMTP configured).
+        _send_account_email(user, plain_pw or None, is_reset=False)
         return Response(UserSerializer(user).data, status=201)
     return Response(serializer.errors, status=400)
 
@@ -181,6 +224,9 @@ def user_reset_account(request, pk):
             details=f"Reset account for {user.name} <{user.email}>. User must change password at next login.",
             requisition=None,
         )
+
+    # Best-effort notification to the user with their temporary password and login URL.
+    _send_account_email(user, default_password, is_reset=True)
 
     return Response(UserSerializer(user).data)
 
