@@ -189,7 +189,7 @@ export function RequisitionDetail() {
                 onClick={() => navigate('/purchase-orders', { state: linkedPO ? { openPoId: linkedPO.id } : undefined })}
                 className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border border-green-300 text-green-700 bg-green-50 hover:bg-green-100 transition-all w-full sm:w-auto"
               >
-                📄 View PO: {req.poNumber}
+                <FileText className="h-4 w-4" aria-hidden /> View PO: {req.poNumber}
               </button>
             );
           })()}
@@ -199,7 +199,7 @@ export function RequisitionDetail() {
                 onClick={() => navigate(`/requisitions/${req.id}/edit`)}
                 className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border border-slate-300 text-slate-700 hover:bg-slate-50 transition-all w-full sm:w-auto"
               >
-                ✏️ Edit Draft
+                Edit Draft
               </button>
               <button
                 onClick={() => void submitRequisition(req.id, currentUser)}
@@ -214,7 +214,7 @@ export function RequisitionDetail() {
               onClick={() => void returnRejectedToDraft(req.id, currentUser).then(() => navigate(`/requisitions/${req.id}/edit`))}
               className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white bg-mars-red hover:bg-mars-red-dark transition-all w-full sm:w-auto"
             >
-              ✏️ Edit and resubmit
+              Edit and resubmit
             </button>
           )}
           {canCancel && !isAuditor && (
@@ -385,7 +385,7 @@ export function RequisitionDetail() {
                       onClick={(e) => { e.preventDefault(); navigate('/purchase-orders', { state: linkedPO ? { openPoId: linkedPO.id } : undefined }); }}
                       className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border border-green-300 text-green-700 bg-green-50 hover:bg-green-100 transition-all"
                     >
-                      📄 View Purchase Order: {req.poNumber}
+                      <FileText className="h-4 w-4" aria-hidden /> View Purchase Order: {req.poNumber}
                     </a>
                   </div>
                 );

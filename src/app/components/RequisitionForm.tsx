@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import { useApp } from '../context/AppContext';
 import type { RequisitionType, Currency, SupplierEntry } from '../data/types';
+import { Banknote, BarChart3, FileText } from 'lucide-react';
 
 const CURRENCIES: Currency[] = ['USD', 'ZIG'];
 const PETTY_CASH_LIMIT = 200;
@@ -382,7 +383,15 @@ export function RequisitionForm() {
                   {TYPES.map((t) => (
                     <button key={t} type="button" onClick={() => { setType(t); setAmount(''); setErrors({}); }}
                       className={`px-4 py-3 rounded-xl border-2 text-sm font-medium transition-all text-left ${type === t ? 'border-mars-red bg-mars-red-muted text-mars-red-dark' : 'border-border text-muted-foreground hover:border-muted-foreground/50'}`}>
-                      <div className="text-xl mb-1">{t === 'Petty Cash' ? '💵' : t === 'Supplier Payment (Normal)' ? '📄' : '📊'}</div>
+                      <div className="mb-1 text-slate-700">
+                        {t === 'Petty Cash' ? (
+                          <Banknote className="h-5 w-5" aria-hidden />
+                        ) : t === 'Supplier Payment (Normal)' ? (
+                          <FileText className="h-5 w-5" aria-hidden />
+                        ) : (
+                          <BarChart3 className="h-5 w-5" aria-hidden />
+                        )}
+                      </div>
                       {t}
                     </button>
                   ))}

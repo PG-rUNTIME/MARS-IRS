@@ -5,6 +5,7 @@ import autoTable from 'jspdf-autotable';
 import { useApp } from '../context/AppContext';
 import { formatCurrency, formatDate, formatDateTime } from './shared/StatusBadge';
 import type { PurchaseOrder } from '../data/types';
+import { FileText } from 'lucide-react';
 
 const LINE_HEIGHT = 5;
 const HALF = 0.5;
@@ -352,7 +353,9 @@ export function PurchaseOrders() {
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
         {filtered.length === 0 ? (
           <div className="py-16 text-center">
-            <div className="text-5xl mb-4">📄</div>
+            <div className="mb-4 inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-slate-50 border border-slate-200 text-slate-500">
+              <FileText className="h-7 w-7" aria-hidden />
+            </div>
             <div className="text-slate-500 font-medium">No purchase orders found</div>
             <div className="text-slate-400 text-sm mt-1">Purchase orders are generated after requisition approval</div>
           </div>

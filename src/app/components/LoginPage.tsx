@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { MarsLogo } from './shared/MarsLogo';
+import { ClipboardList, FileText, LineChart, Lock } from 'lucide-react';
 
 interface LoginPageProps {
   onLogin: () => void;
@@ -52,13 +53,15 @@ export function LoginPage({ onLogin }: LoginPageProps) {
         </div>
         <div className="relative z-10 grid grid-cols-2 gap-4">
           {[
-            { icon: '🔒', label: 'Role-Based Access', desc: 'Secure, permission-controlled views' },
-            { icon: '📋', label: 'Multi-Level Approvals', desc: 'Automated workflow routing' },
-            { icon: '📊', label: 'Real-Time Tracking', desc: 'Live status & audit trail' },
-            { icon: '📄', label: 'PO Generation', desc: 'Automated purchase orders' },
+            { Icon: Lock, label: 'Role-Based Access', desc: 'Secure, permission-controlled views' },
+            { Icon: ClipboardList, label: 'Multi-Level Approvals', desc: 'Automated workflow routing' },
+            { Icon: LineChart, label: 'Real-Time Tracking', desc: 'Live status & audit trail' },
+            { Icon: FileText, label: 'PO Generation', desc: 'Automated purchase orders' },
           ].map((item) => (
             <div key={item.label} className="bg-white/5 rounded-xl p-4 border border-white/10">
-              <div className="text-2xl mb-2">{item.icon}</div>
+              <div className="mb-2">
+                <item.Icon className="h-6 w-6 text-white" aria-hidden />
+              </div>
               <div className="text-white text-sm font-medium">{item.label}</div>
               <div className="text-white/60 text-xs mt-1">{item.desc}</div>
             </div>
