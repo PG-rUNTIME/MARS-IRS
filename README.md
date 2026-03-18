@@ -84,9 +84,9 @@ Approval steps are persisted on each requisition as an ordered chain. The curren
 flowchart LR
   R[Requester] -->|Submit| DM[Department Manager]
   DM --> ACC[Accountant]
-  ACC --> APPR[Next approver role(s)\n(GM / FC / HoO ...)]
-  APPR --> FIN[Pending Payment\n(Accounting / Finance)]
-  FIN --> PAID[Paid\n(POP uploaded)]
+  ACC --> APPR["Next approvers: GM, FC, HoO"]
+  APPR --> FIN["Pending Payment — Accounting"]
+  FIN --> PAID["Paid — POP uploaded"]
 ```
 
 ### What approvers see before approving
