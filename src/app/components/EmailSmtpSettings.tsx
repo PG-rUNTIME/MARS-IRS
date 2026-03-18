@@ -80,7 +80,7 @@ export function EmailSmtpSettings() {
           <CheckCircle className="size-4" />
           <AlertTitle>Email notifications enabled</AlertTitle>
           <AlertDescription>
-            Users will receive HTML notification emails (requisition summary table + line items) for requisitions requiring their attention and for status updates. Set <code className="text-xs bg-slate-100 px-1 rounded">FRONTEND_BASE_URL</code> on the backend (e.g. <code className="text-xs">https://your-app.example.com</code>) so the &quot;log in here&quot; link works.
+            Users will receive HTML notification emails (requisition summary table + line items) for requisitions requiring their attention and for status updates. Set <code className="text-xs bg-slate-100 px-1 rounded">FRONTEND_BASE_URL</code> in <code className="text-xs">docker-compose.yml</code> (backend service) so the &quot;log in here&quot; link works.
           </AlertDescription>
         </Alert>
       )}

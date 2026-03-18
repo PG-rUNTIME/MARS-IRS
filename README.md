@@ -149,7 +149,7 @@ Set these backend environment variables:
 - `REQUISITION_EMAIL_SYSTEM_NAME` (optional)  
   Example: `MARS Internal Requisition System`
 
-Docker Compose supports them via `.env` (see `docker.env.example`).
+Docker Compose: set these in **`docker-compose.yml`** under the `backend` service `environment` block (`FRONTEND_BASE_URL`, `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`, etc.).
 
 ---
 
@@ -306,22 +306,16 @@ Services:
 - Backend API: `http://localhost:8001/api/`
 - pgAdmin: `http://localhost:5050`
 
-#### Configuring email login links (Docker)
+#### Configuring hosts, CORS, and email links (Docker)
 
-1) Copy `docker.env.example` to `.env` in the repo root:
+Edit **`docker-compose.yml`** → `backend` → `environment`:
 
-```bash
-cp docker.env.example .env
-```
+- `ALLOWED_HOSTS` — include your VM IP or public hostname (comma-separated).
+- `CORS_ALLOWED_ORIGINS` — every browser origin that calls the API (e.g. `http://YOUR_IP:5174`).
+- `FRONTEND_BASE_URL` — public app URL for email “log in” links (no trailing slash).
+- `REQUISITION_EMAIL_SYSTEM_NAME` — label in notification emails.
 
-2) Edit `.env`:
-
-```bash
-FRONTEND_BASE_URL=https://irs.yourcompany.com
-REQUISITION_EMAIL_SYSTEM_NAME=MARS Internal Requisition System
-```
-
-3) Rebuild/restart:
+Then:
 
 ```bash
 docker compose up --build -d
@@ -446,8 +440,6 @@ docker compose up --build -d
 # 2) Open the app
 open http://localhost:5174
 
-# 3) (Optional) set email link branding
-cp docker.env.example .env
-# edit .env -> FRONTEND_BASE_URL, REQUISITION_EMAIL_SYSTEM_NAME
+# 3) (Optional) edit docker-compose.yml backend env for your IP/domain, then:
 docker compose up --build -d
 ```
