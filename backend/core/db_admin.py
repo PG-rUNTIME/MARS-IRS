@@ -10,17 +10,48 @@ from pathlib import Path
 from django.conf import settings
 from django.db import connection
 from django.http import FileResponse
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from django.utils import timezone
+from rest_framework.decorators import api_view, permission_classes, authentication_classes
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+
+from .models import ApiToken
 
 BACKUP_ROOT = Path(os.environ.get('BACKUP_ROOT', '/backups'))
 
 
+def _get_token_user(request):
+    """
+    Lightweight token lookup that never raises; used only for DB admin views.
+    This bypasses the global ApiTokenAuthentication so we don't 400 on stale tokens
+    (common immediately after restoring a backup).
+    """
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Token "):
+        return None
+    _, key = auth.split(" ", 1)
+    key = key.strip()
+    if not key:
+        return None
+    try:
+        token = ApiToken.objects.select_related("user").get(key=key)
+    except ApiToken.DoesNotExist:
+        return None
+    token.last_used_at = timezone.now()
+    token.save(update_fields=["last_used_at"])
+    return token.user
+
+
 def _is_sysadmin(request) -> bool:
+    # Prefer any user already attached to the request (e.g. if other auth ran)
     user = getattr(request, 'user', None)
     if not user or not getattr(user, 'id', None) or not hasattr(user, 'roles'):
-        return False
+        # Fallback: look up user by API token without raising
+        user = _get_token_user(request)
+        if not user:
+            return False
+        # Attach so downstream code can rely on request.user
+        request.user = user
     return user.roles.filter(role='System Administrator').exists()
 
 
@@ -36,7 +67,8 @@ def _db_settings():
 
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@authentication_classes([])  # bypass global ApiTokenAuthentication (we handle token manually)
+@permission_classes([AllowAny])
 def database_health(request):
     """Return database connection status and version."""
     if not _is_sysadmin(request):
@@ -58,7 +90,8 @@ def database_health(request):
 
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@authentication_classes([])
+@permission_classes([AllowAny])
 def backup_list(request):
     """List backup files in the backup volume."""
     if not _is_sysadmin(request):
@@ -78,7 +111,8 @@ def backup_list(request):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@authentication_classes([])
+@permission_classes([AllowAny])
 def backup_create(request):
     """Create a full DB backup to the named volume (plain SQL)."""
     if not _is_sysadmin(request):
@@ -145,7 +179,8 @@ def _filter_pg17_session_params(sql_content: str) -> str:
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@authentication_classes([])
+@permission_classes([AllowAny])
 def backup_restore(request):
     """Restore database from a backup file in the volume."""
     if not _is_sysadmin(request):
@@ -192,7 +227,8 @@ def backup_restore(request):
 
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@authentication_classes([])
+@permission_classes([AllowAny])
 def backup_download(request, filename: str):
     """Download a backup file from the backup volume."""
     if not _is_sysadmin(request):
@@ -216,7 +252,8 @@ def backup_download(request, filename: str):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@authentication_classes([])
+@permission_classes([AllowAny])
 def backup_upload_restore(request):
     """
     Upload a .sql backup file and restore it.
