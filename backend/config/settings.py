@@ -15,6 +15,15 @@ env = environ.Env(
 BASE_DIR = Path(__file__).resolve().parent.parent
 environ.Env.read_env(BASE_DIR / '.env')
 
+# Application log directory (rotating file). Override with LOG_DIR in .env for Docker/host paths.
+_LOG_DIR = Path(env('LOG_DIR', default=str(BASE_DIR / 'logs')))
+try:
+    _LOG_DIR.mkdir(parents=True, exist_ok=True)
+except OSError:
+    # If the path is not writable (e.g. misconfigured volume), file handler is skipped below.
+    pass
+_LOG_FILE = _LOG_DIR / 'mars_irs.log'
+
 SECRET_KEY = env('SECRET_KEY', default='dev-secret-key-change-in-production')
 DEBUG = env('DEBUG')
 ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['localhost', '127.0.0.1'])
@@ -125,3 +134,66 @@ if not DEBUG:
     SECURE_HSTS_SECONDS = env.int('SECURE_HSTS_SECONDS', default=0)  # e.g. 31536000 if you want HSTS
     SECURE_HSTS_INCLUDE_SUBDOMAINS = False
     SECURE_HSTS_PRELOAD = False
+
+# ─── Logging (console + rotating file) ─────────────────────────────────────────
+# Business/audit events for requisitions stay in the database (audit trail).
+# This file captures server-side technical logs: errors, warnings, Django/DRF issues.
+_LOG_LEVEL = env('LOG_LEVEL', default='DEBUG' if DEBUG else 'INFO')
+_file_handlers = ['console']
+_handlers: dict = {
+    'console': {
+        'class': 'logging.StreamHandler',
+        'formatter': 'simple',
+    },
+}
+if _LOG_FILE.parent.exists() and os.access(_LOG_FILE.parent, os.W_OK):
+    _handlers['file'] = {
+        'class': 'logging.handlers.RotatingFileHandler',
+        'filename': str(_LOG_FILE),
+        'maxBytes': env.int('LOG_FILE_MAX_BYTES', default=10 * 1024 * 1024),  # 10 MiB
+        'backupCount': env.int('LOG_FILE_BACKUP_COUNT', default=7),
+        'formatter': 'verbose',
+    }
+    _file_handlers.append('file')
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{asctime} | {levelname} | {name} | {process:d} | {message}',
+            'style': '{',
+        },
+        'simple': {
+            'format': '{levelname} {asctime} {name}: {message}',
+            'style': '{',
+        },
+    },
+    'handlers': _handlers,
+    'root': {
+        'handlers': _file_handlers,
+        'level': _LOG_LEVEL,
+    },
+    'loggers': {
+        'django': {
+            'handlers': _file_handlers,
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'django.request': {
+            'handlers': _file_handlers,
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        'django.server': {
+            'handlers': _file_handlers,
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'core': {
+            'handlers': _file_handlers,
+            'level': 'DEBUG' if DEBUG else 'INFO',
+            'propagate': False,
+        },
+    },
+}

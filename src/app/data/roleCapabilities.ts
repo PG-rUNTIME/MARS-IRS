@@ -14,6 +14,8 @@ export const SECTION_ACCESS: Record<string, UserRole[]> = {
   'admin': ['System Administrator'],
   'database': ['System Administrator'],
   'pending-approvals': ['Department Manager', 'Accountant', 'General Manager', 'Financial Controller', 'Head of Operations'],
+  /** Finance team queue: same roles as payment processing (FINANCE_ACTION_ROLES). */
+  'pending-payment': ['Accountant', 'General Manager', 'Financial Controller'],
   'department-requisitions': ['Department Manager'],
   'new-req': ['Requester', 'Department Manager', 'Accountant', 'General Manager', 'Financial Controller', 'Head of Operations', 'System Administrator'],
 };
@@ -48,9 +50,9 @@ export function getPrimaryRole(roles: UserRole[]): UserRole {
 export const ROLE_CAPABILITIES: Record<UserRole, string> = {
   Requester: 'Own requisitions only. Can create, submit, view, and cancel Draft/Submitted requisitions.',
   'Department Manager': 'First approver for department requisitions. Can view team submissions and pending approvals.',
-  Accountant: 'Financial review approver. Can view all requisitions, add finance notes, manage payments, generate POs.',
-  'General Manager': 'Senior approval level. Full requisition visibility and finance actions.',
-  'Financial Controller': 'Final approver. Full system visibility, audit trail, PO generation, payment oversight.',
+  Accountant: 'Financial review approver. Can view all requisitions, add finance notes, manage payments, generate POs, and use the Pending payment queue.',
+  'General Manager': 'Senior approval level. Full requisition visibility, finance actions, and Pending payment queue.',
+  'Financial Controller': 'Final approver. Full system visibility, audit trail, PO generation, payment oversight, and Pending payment queue.',
   'Head of Operations': 'Final approver for Petty Cash. Operational oversight, reports access.',
   'System Administrator': 'User management and system configuration only. Can assign roles, create users, and access database health, backup, and restore. No access to Dashboard, Finance & Reporting, Purchase Orders, or Reports & KPIs.',
   Auditor: 'Full read-only access to requisitions, audit trail, and reports. Cannot edit records.',

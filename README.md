@@ -306,6 +306,8 @@ Services:
 - Backend API: `http://localhost:8001/api/`
 - pgAdmin: `http://localhost:5050`
 
+**Testing the API with Postman:** see **[docs/POSTMAN.md](docs/POSTMAN.md)** (authentication, all endpoints, examples, and Postman environment tips).
+
 #### Configuring hosts, CORS, and email links (Docker)
 
 Edit **`docker-compose.yml`** → `backend` → `environment`:

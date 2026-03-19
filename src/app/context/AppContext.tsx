@@ -3,7 +3,7 @@ import type {
   Requisition, PurchaseOrder, AppNotification, AuditEntry, User,
   RequisitionType, UserRole, ApprovalStep, POItem, Attachment, SupplierEntry,
 } from '../data/types';
-import { getPrimaryRole } from '../data/roleCapabilities';
+import { getPrimaryRole, FINANCE_ACTION_ROLES } from '../data/roleCapabilities';
 import {
   isApiEnabled,
   fetchUsers, createUser as apiCreateUser, updateUser as apiUpdateUser,
@@ -309,6 +309,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     } catch { /* non-fatal */ }
   };
 
+  /** In-app (+ email) alerts for everyone who can process payments, except the actor. */
+  const notifyFinanceTeamPendingPayment = async (req: Requisition, reqId: string, actorUserId: string) => {
+    for (const u of users) {
+      if (u.id === actorUserId) continue;
+      if (!u.roles.some((r) => FINANCE_ACTION_ROLES.includes(r))) continue;
+      await pushNotif(
+        u.id,
+        'Payment required',
+        `Requisition ${req.reqNumber} is pending payment. Open it to upload proof of payment when complete.`,
+        'payment',
+        reqId,
+        { headline: 'An internal requisition is pending payment.', statusStage: 'AwaitingPaymentProcessing' },
+      );
+    }
+  };
+
   // ─── Requisitions ──────────────────────────────────────────────────────────
 
   const createRequisition = async (data: Partial<Requisition>, currentUser: User): Promise<string> => {
@@ -579,16 +595,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         reqId,
         { headline: 'Your internal requisition has been approved.', statusStage: 'AwaitingPaymentProcessing' },
       );
-      for (const u of users.filter(u => u.roles.includes('Accountant') || u.roles.includes('Financial Controller'))) {
-        await pushNotif(
-          u.id,
-          'Payment Required',
-          `Requisition ${req.reqNumber} is pending payment.`,
-          'info',
-          reqId,
-          { headline: 'An internal requisition is pending payment.', statusStage: 'AwaitingPaymentProcessing' },
-        );
-      }
+      await notifyFinanceTeamPendingPayment(req, reqId, currentUser.id);
     } else if (nextPending) {
       for (const u of users.filter(u => u.roles.includes(nextPending.role as UserRole))) {
         await pushNotif(
@@ -702,7 +709,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const markAsPendingPayment = async (reqId: string, currentUser: User) => {
     const req = requisitions.find(r => r.id === reqId);
-    if (!req) return;
+    if (!req || req.status === 'Pending Payment') return;
     await apiUpdateRequisition(Number(reqId), {
       status: 'Pending Payment',
       audit_action: 'Payment Initiated',
@@ -711,6 +718,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       actor_user_name: currentUser.name,
       actor_user_role: getPrimaryRole(currentUser.roles),
     });
+    await notifyFinanceTeamPendingPayment(req, reqId, currentUser.id);
     await refreshReq(reqId);
   };
 

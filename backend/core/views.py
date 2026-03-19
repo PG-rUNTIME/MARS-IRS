@@ -1,5 +1,6 @@
 import csv
 import base64
+import logging
 import os
 import re
 from decimal import Decimal
@@ -28,6 +29,8 @@ from .serializers import (
 )
 from .smtp_config import get_smtp_config, get_smtp_config_public, save_smtp_config
 from .requisition_email_html import build_requisition_notification_html
+
+logger = logging.getLogger(__name__)
 from .permissions import IsSystemAdministrator, IsAuditorOrFinancialController
 
 
@@ -255,8 +258,7 @@ def requisition_list(request):
     data = request.data
     write_ser = RequisitionWriteSerializer(data=data)
     if not write_ser.is_valid():
-        import logging
-        logging.getLogger('django').error('RequisitionCreate 400: %s | data keys: %s', write_ser.errors, list(data.keys()))
+        logger.warning('RequisitionCreate 400: %s | data keys: %s', write_ser.errors, list(data.keys()))
         return Response(write_ser.errors, status=400)
 
     with transaction.atomic():

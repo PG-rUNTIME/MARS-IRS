@@ -7,7 +7,7 @@ import type { RequisitionStatus, RequisitionType } from '../data/types';
 import { exportToExcel, exportToWord } from '../utils/exportUtils';
 
 interface RequisitionListProps {
-  mode: 'my' | 'all' | 'pending' | 'department';
+  mode: 'my' | 'all' | 'pending' | 'department' | 'pending-payment';
 }
 
 const TYPE_OPTIONS: RequisitionType[] = ['Petty Cash', 'Supplier Payment (Normal)', 'High-Value/CAPEX'];
@@ -33,6 +33,7 @@ export function RequisitionList({ mode }: RequisitionListProps) {
     if (mode === 'my') return requisitions.filter((r) => r.requesterId === currentUser.id);
     if (mode === 'pending') return requisitions.filter((r) => r.status !== 'Rejected' && r.currentApproverRole != null && currentUser.roles.includes(r.currentApproverRole));
     if (mode === 'department') return requisitions.filter((r) => r.department === currentUser.department);
+    if (mode === 'pending-payment') return requisitions.filter((r) => r.status === 'Pending Payment');
     return requisitions;
   }, [requisitions, mode, currentUser]);
 
@@ -81,8 +82,26 @@ export function RequisitionList({ mode }: RequisitionListProps) {
   const handleExportExcel = () => exportToExcel(listExportHeaders, listExportRows, `requisitions_${mode}`);
   const handleExportWord = () => exportToWord(`${title}`, listExportHeaders, listExportRows, `requisitions_${mode}`);
 
-  const title = mode === 'my' ? 'My Requisitions' : mode === 'pending' ? 'Pending Approvals' : mode === 'department' ? 'Department Requisitions' : 'All Requisitions';
-  const subtitle = mode === 'my' ? 'Requisitions you have submitted' : mode === 'pending' ? 'Requisitions awaiting your approval' : mode === 'department' ? `All requisitions raised in ${currentUser.department} and their stages` : 'System-wide requisitions';
+  const title =
+    mode === 'my'
+      ? 'My Requisitions'
+      : mode === 'pending'
+        ? 'Pending Approvals'
+        : mode === 'department'
+          ? 'Department Requisitions'
+          : mode === 'pending-payment'
+            ? 'Pending payment'
+            : 'All Requisitions';
+  const subtitle =
+    mode === 'my'
+      ? 'Requisitions you have submitted'
+      : mode === 'pending'
+        ? 'Requisitions awaiting your approval'
+        : mode === 'department'
+          ? `All requisitions raised in ${currentUser.department} and their stages`
+          : mode === 'pending-payment'
+            ? 'Requisitions awaiting payment processing and proof of payment'
+            : 'System-wide requisitions';
 
   const totalValueUSD = filtered.filter((r) => r.currency === 'USD').reduce((s, r) => s + r.amount, 0);
   const totalValueZIG = filtered.filter((r) => r.currency === 'ZIG').reduce((s, r) => s + r.amount, 0);
@@ -125,7 +144,7 @@ export function RequisitionList({ mode }: RequisitionListProps) {
               {totalValueZIG > 0 && <span className="ml-2 text-slate-600">{formatCurrency(totalValueZIG, 'ZIG')}</span>}
             </div>
           </div>
-          {(mode === 'my' || !currentUser.roles.includes('Auditor')) && mode !== 'pending' && (
+          {(mode === 'my' || !currentUser.roles.includes('Auditor')) && mode !== 'pending' && mode !== 'pending-payment' && (
             <button
               onClick={() => navigate('/requisitions/new')}
               className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-white text-sm font-medium transition-all hover:opacity-90 bg-mars-red hover:bg-mars-red-dark w-full sm:w-auto"
@@ -195,6 +214,9 @@ export function RequisitionList({ mode }: RequisitionListProps) {
         <span>Showing <span className="font-medium text-slate-800">{filtered.length}</span> of {baseReqs.length} requisitions</span>
         {mode === 'pending' && filtered.length > 0 && (
           <span className="ml-2 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">Action Required</span>
+        )}
+        {mode === 'pending-payment' && filtered.length > 0 && (
+          <span className="ml-2 px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">Awaiting payment</span>
         )}
       </div>
 
@@ -299,7 +321,7 @@ export function RequisitionList({ mode }: RequisitionListProps) {
                           onClick={() => navigate(`/requisitions/${req.id}`)}
                           className="text-xs font-medium px-3 py-1.5 rounded-lg border border-border text-muted-foreground hover:border-mars-red hover:text-mars-red transition-all"
                         >
-                          {mode === 'pending' ? 'Review' : 'View'}
+                          {mode === 'pending' ? 'Review' : mode === 'pending-payment' ? 'Process' : 'View'}
                         </button>
                       </div>
                     </td>

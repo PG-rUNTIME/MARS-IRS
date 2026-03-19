@@ -36,6 +36,8 @@ services:
       REQUISITION_EMAIL_SYSTEM_NAME: MARS Internal Requisition System
     volumes:
       - pg_backups:/backups
+      # Persist rotating app logs (see backend/logs/mars_irs.log* and LOG_DIR in settings)
+      - ./backend/logs:/app/logs
     depends_on:
       db:
         condition: service_healthy

@@ -3,6 +3,8 @@ dist
 .env
 .env.local
 *.log
+# Django rotating logs (directory created at runtime)
+backend/logs/
 .DS_Store
 __pycache__/
 *.pyc

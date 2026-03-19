@@ -74,6 +74,14 @@ export function createAppRouter(onLogout: () => void) {
           ),
         },
         {
+          path: 'pending-payment',
+          element: (
+            <RequireRole roles={['Accountant', 'General Manager', 'Financial Controller']}>
+              <RequisitionList mode="pending-payment" />
+            </RequireRole>
+          ),
+        },
+        {
           path: 'department-requisitions',
           element: (
             <RequireRole roles={['Department Manager']}>

@@ -67,6 +67,7 @@ To harden for a fully public deployment you would need to add authentication (e.
 - **Admin password at deploy**: Set `ADMIN_PASSWORD` (and optionally `ADMIN_EMAIL`) in the backend environment so the seed command creates the first admin with a strong password.
 - **Database backups**: Use the in-app backup/restore (volume `pg_backups`) or your host’s backup; test restore occasionally.
 - **Monitoring**: Use your host’s logging and health checks; the backend exposes `/api/database/health/` for DB health.
+- **Application log file**: The backend writes **rotating technical logs** to `backend/logs/mars_irs.log` (configurable via `LOG_DIR`, `LOG_LEVEL`, `LOG_FILE_MAX_BYTES`, `LOG_FILE_BACKUP_COUNT` in the backend environment). Docker Compose mounts `./backend/logs` so logs survive container restarts. This is separate from the **in-app audit trail** (requisition actions in the database)—use both: DB for business audit, files for ops/debugging.
 
 ---
 
