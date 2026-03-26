@@ -7,6 +7,13 @@ import type { UserRole } from './types';
 export const SECTION_ACCESS: Record<string, UserRole[]> = {
   'dashboard': ['Requester', 'Department Manager', 'Accountant', 'General Manager', 'Financial Controller', 'Head of Operations', 'Auditor'],
   'my-requisitions': ['Requester'],
+  'my-rfqs': ['Requester'],
+  'pending-rfqs': ['Procurement Clerk'],
+  'actioned-rfqs': ['Procurement Clerk'],
+  'suppliers': ['Procurement Clerk'],
+  'budget-setup': ['Financial Controller'],
+  'budget-stats': ['Department Manager', 'Accountant', 'General Manager', 'Financial Controller'],
+  'new-rfq': ['Requester'],
   'all-requisitions': ['Accountant', 'General Manager', 'Financial Controller', 'Head of Operations', 'Auditor'],
   'purchase-orders': ['Accountant', 'General Manager', 'Financial Controller', 'Auditor', 'Requester'],
   'reports': ['General Manager', 'Financial Controller', 'Accountant', 'Head of Operations', 'Auditor'],
@@ -54,6 +61,7 @@ export const ROLE_CAPABILITIES: Record<UserRole, string> = {
   'General Manager': 'Senior approval level. Full requisition visibility, finance actions, and Pending payment queue.',
   'Financial Controller': 'Final approver. Full system visibility, audit trail, PO generation, payment oversight, and Pending payment queue.',
   'Head of Operations': 'Final approver for Petty Cash. Operational oversight, reports access.',
+  'Procurement Clerk': 'RFQ intake and quotation processing. Can manage suppliers, upload quotations, and bring RFQs back for requester selection.',
   'System Administrator': 'User management and system configuration only. Can assign roles, create users, and access database health, backup, and restore. No access to Dashboard, Finance & Reporting, Purchase Orders, or Reports & KPIs.',
   Auditor: 'Full read-only access to requisitions, audit trail, and reports. Cannot edit records.',
 };

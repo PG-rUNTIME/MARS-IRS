@@ -200,12 +200,13 @@ const DatabaseIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill=
 const MailIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>;
 /** Banknote-style icon for payment queue */
 const PendingPaymentIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01M18 12h.01"/></svg>;
+const BudgetIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 21h18"/><path d="M5 21V7l7-4v18"/><path d="M19 21V11l-7-4"/></svg>;
 const LogOutIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>;
 const MenuIcon = () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>;
 
 export function Layout({ onLogout }: { onLogout: () => void }) {
   const { currentUser } = useAuth();
-  const { notifications, requisitions } = useApp();
+  const { notifications, requisitions, rfqs } = useApp();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
@@ -214,6 +215,8 @@ export function Layout({ onLogout }: { onLogout: () => void }) {
 
   const unreadCount = notifications.filter((n) => n.recipientId === currentUser.id && !n.read).length;
   const pendingApprovals = requisitions.filter((r) => r.status !== 'Rejected' && r.currentApproverRole != null && currentUser.roles.includes(r.currentApproverRole)).length;
+  const pendingRFQs = rfqs.filter((r) => r.status === 'Pending Procurement').length;
+  const actionedRFQs = rfqs.filter((r) => (r.events || []).some((e) => e.actorId === currentUser.id)).length;
   const pendingPaymentCount = requisitions.filter((r) => r.status === 'Pending Payment').length;
 
   const handleLogout = () => {
@@ -271,8 +274,23 @@ export function Layout({ onLogout }: { onLogout: () => void }) {
         {canAccess(currentUser.roles, 'new-req') && (
           <NavItem to="/requisitions/new" icon={<PlusIcon />} label="New Requisition" />
         )}
+        {canAccess(currentUser.roles, 'my-rfqs') && (
+          <NavItem to="/my-rfqs" icon={<FileIcon />} label="My RFQs" />
+        )}
+        {canAccess(currentUser.roles, 'new-rfq') && (
+          <NavItem to="/rfqs/new" icon={<PlusIcon />} label="New RFQ" />
+        )}
         {canAccess(currentUser.roles, 'pending-approvals') && (
           <NavItem to="/pending-approvals" icon={<ClockIcon />} label="Pending Approvals" badge={pendingApprovals} />
+        )}
+        {canAccess(currentUser.roles, 'pending-rfqs') && (
+          <NavItem to="/pending-rfqs" icon={<ClockIcon />} label="Pending RFQs" badge={pendingRFQs} />
+        )}
+        {canAccess(currentUser.roles, 'actioned-rfqs') && (
+          <NavItem to="/actioned-rfqs" icon={<ListIcon />} label="Actioned RFQs" badge={actionedRFQs} />
+        )}
+        {canAccess(currentUser.roles, 'suppliers') && (
+          <NavItem to="/suppliers" icon={<ListIcon />} label="Suppliers" />
         )}
         {canAccess(currentUser.roles, 'department-requisitions') && (
           <NavItem to="/department-requisitions" icon={<ListIcon />} label="Department Requisitions" />
@@ -292,6 +310,12 @@ export function Layout({ onLogout }: { onLogout: () => void }) {
         )}
         {canAccess(currentUser.roles, 'reports') && (
           <NavItem to="/reports" icon={<BarIcon />} label="Reports & KPIs" />
+        )}
+        {canAccess(currentUser.roles, 'budget-setup') && (
+          <NavItem to="/budgets/setup" icon={<BudgetIcon />} label="Budget Setup" />
+        )}
+        {canAccess(currentUser.roles, 'budget-stats') && (
+          <NavItem to="/budgets/stats" icon={<BudgetIcon />} label="Budget Stats" />
         )}
         {canAccess(currentUser.roles, 'audit-trail') && (
           <NavItem to="/audit-trail" icon={<ShieldIcon />} label="Audit Trail" />

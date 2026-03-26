@@ -23,6 +23,7 @@ flowchart TB
     API_GW["HTTP API"]
     API_GW --> Auth["Auth / Sessions"]
     API_GW --> ReqAPI["Requisitions API"]
+    API_GW --> BudgetAPI["Budgets API"]
     API_GW --> POAPI["Purchase Orders API"]
     API_GW --> AuditAPI["Audit API"]
     API_GW --> DBAPI["Database / Backup API"]
@@ -61,6 +62,7 @@ flowchart LR
     WSGI[WSGI / ASGI]
     AuthB[Auth]
     ReqB[Requisitions]
+    BudgetB[Department budgets]
     POB[Purchase Orders]
     AuditB[Audit log]
     DBHealth[DB health / backups]
@@ -76,11 +78,13 @@ flowchart LR
   Client -->|REST| WSGI
   WSGI --> AuthB
   WSGI --> ReqB
+  WSGI --> BudgetB
   WSGI --> POB
   WSGI --> AuditB
   WSGI --> DBHealth
   AuthB --> PG
   ReqB --> PG
+  BudgetB --> PG
   POB --> PG
   AuditB --> PG
   DBHealth --> PG
@@ -124,7 +128,7 @@ stateDiagram-v2
   Pending_Review --> Pending_Approval: Accountant approves
   Pending_Approval --> Pending_Approval: GM / FC approve (non–Petty Cash)
   Pending_Approval --> Pending_Payment: Final approval\n(+ auto PO for Supplier/High-Value)
-  Pending_Payment --> Paid: Accountant uploads POP
+  Pending_Payment --> Paid: Finance team uploads POP
   Submitted --> Rejected: Reject
   Rejected --> Draft: Return to draft
   Draft --> Cancelled: Cancel
@@ -185,7 +189,7 @@ flowchart TB
 
 ## Summary
 
-- **Frontend:** Single-page app (React + Vite). Serves static assets; state in memory (AppContext) or via backend when `VITE_API_BASE` is set (audit, DB health).
-- **Backend:** Django HTTP API for auth, requisitions, POs, audit, DB health/backups. Writes to PostgreSQL.
-- **Database:** PostgreSQL; holds users, requisitions, approval chains, POs, audit log, attachments/POP metadata (and optionally file storage).
+- **Frontend:** Single-page app (React + Vite). Includes RFQ, supplier master data, and annual budget setup/statistics screens.
+- **Backend:** Django HTTP API for auth, requisitions, RFQ workflow, supplier master data, annual budgets (with threshold alerts and monthly trend), POs, audit, DB health/backups.
+- **Database:** PostgreSQL; holds users, requisitions, RFQs, suppliers, department budgets, approval chains, POs, audit log, and attachments/POP metadata.
 - **Deployment:** Docker: frontend (nginx), backend (Django), PostgreSQL. Frontend build-time env `VITE_API_BASE` points to backend URL (empty when same-origin proxy).

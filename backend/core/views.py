@@ -10,7 +10,7 @@ from django.db.models import Q
 from django.http import HttpResponse, FileResponse
 from django.conf import settings
 from django.utils import timezone
-from django.utils.dateparse import parse_datetime
+from django.utils.dateparse import parse_datetime, parse_date
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -19,12 +19,14 @@ from rest_framework.response import Response
 from .models import (
     User, Requisition, ApprovalStep, ReqComment, Attachment, ApiToken,
     POItem, PurchaseOrder, AppNotification, DelegationRecord, AuditEntry,
+    RFQ, RFQItem, RFQQuote, RFQQuoteItem, RFQQuoteAttachment, RFQEvent, Supplier, DepartmentBudget,
 )
 from .serializers import (
     UserSerializer, RequisitionListSerializer, RequisitionDetailSerializer,
     RequisitionWriteSerializer, ApprovalStepSerializer, ReqCommentSerializer,
     AttachmentSerializer, POItemSerializer, PurchaseOrderSerializer,
     AppNotificationSerializer, DelegationRecordSerializer, AuditEntrySerializer,
+    RFQSerializer, SupplierSerializer, DepartmentBudgetSerializer,
     check_password, hash_password,
 )
 from .smtp_config import get_smtp_config, get_smtp_config_public, save_smtp_config
@@ -32,6 +34,24 @@ from .requisition_email_html import build_requisition_notification_html
 
 logger = logging.getLogger(__name__)
 from .permissions import IsSystemAdministrator, IsAuditorOrFinancialController
+
+FINANCE_TEAM_ROLES = ('Accountant', 'Financial Controller', 'General Manager')
+
+
+def _normalize_supplier_category(value: str) -> str:
+    raw = (value or '').strip()
+    if not raw:
+        return 'Other'
+    allowed = {k.lower(): k for (k, _) in Supplier.CATEGORY_CHOICES}
+    return allowed.get(raw.lower(), 'Other')
+
+
+def _has_any_role(user, allowed_roles: tuple[str, ...]) -> bool:
+    try:
+        roles = list(user.roles.values_list('role', flat=True))
+    except Exception:
+        roles = []
+    return any(r in allowed_roles for r in roles)
 
 
 # ─── Pagination ───────────────────────────────────────────────────────────────
@@ -345,6 +365,14 @@ def requisition_detail(request, pk):
 
     if request.method == 'PATCH':
         data = request.data
+        requested_status = (data.get('status') or '').strip()
+        requesting_paid_at_set = ('paid_at' in data and data.get('paid_at') is not None)
+        is_finance_payment_mutation = (
+            requested_status in ('Pending Payment', 'Paid')
+            or requesting_paid_at_set
+        )
+        if is_finance_payment_mutation and not _has_any_role(request.user, FINANCE_TEAM_ROLES):
+            return Response({'error': 'Forbidden. Finance team only.'}, status=403)
         write_ser = RequisitionWriteSerializer(req, data=data, partial=True)
         if not write_ser.is_valid():
             return Response(write_ser.errors, status=400)
@@ -469,15 +497,22 @@ def add_attachment(request, req_pk):
         req = Requisition.objects.get(pk=req_pk)
     except Requisition.DoesNotExist:
         return Response({'error': 'Not found.'}, status=404)
+    is_pop = bool(request.data.get('is_proof_of_payment', False))
+    if is_pop:
+        if req.status != 'Pending Payment':
+            return Response({'error': 'Proof of payment can only be uploaded when requisition is Pending Payment.'}, status=400)
+        if not _has_any_role(request.user, FINANCE_TEAM_ROLES):
+            return Response({'error': 'Forbidden. Finance team only.'}, status=403)
+
     data_url = request.data.get('data_url', '') or ''
     att = Attachment.objects.create(
         requisition=req,
         name=request.data.get('name', ''),
         type=request.data.get('type', ''),
         size=request.data.get('size', ''),
-        uploaded_by=request.data.get('uploaded_by', ''),
+        uploaded_by=(getattr(request.user, 'name', '') or request.data.get('uploaded_by', '')),
         data_url='' if data_url.startswith('data:') else data_url,
-        is_proof_of_payment=request.data.get('is_proof_of_payment', False),
+        is_proof_of_payment=is_pop,
     )
     # If client sent base64 data URL, store the binary on disk and return a URL instead.
     try:
@@ -519,6 +554,987 @@ def attachment_download(request, pk):
     if not os.path.exists(att.file_path):
         return Response({'error': 'File missing on server.'}, status=404)
     return FileResponse(open(att.file_path, 'rb'), as_attachment=True, filename=att.name or f'attachment_{att.id}')
+
+
+# ─── RFQ (Request for Quotation) ─────────────────────────────────────────────
+
+def _generate_number(prefix: str) -> str:
+    """Generate stable-ish business IDs with millisecond precision."""
+    now = timezone.now()
+    ms = int(now.microsecond / 1000)
+    return f"{prefix}{now.year}{now.month:02d}{now.day:02d}{now.hour:02d}{now.minute:02d}{now.second:02d}{ms:03d}"
+
+
+def _approval_chain_template(req_type: str) -> list[dict]:
+    """Mirror the frontend buildApprovalChain() logic for conversion."""
+    if req_type == 'Petty Cash':
+        return [
+            { 'role': 'Department Manager', 'label': 'Department Manager' },
+            { 'role': 'Accountant', 'label': 'Accountant' },
+            { 'role': 'Head of Operations', 'label': 'Head of Operations & Training' },
+        ]
+    return [
+        { 'role': 'Department Manager', 'label': 'Department Manager' },
+        { 'role': 'Accountant', 'label': 'Accountant' },
+        { 'role': 'General Manager', 'label': 'General Manager' },
+        { 'role': 'Financial Controller', 'label': 'Financial Controller' },
+    ]
+
+
+def _primary_role(user) -> str:
+    try:
+        roles = list(user.roles.values_list('role', flat=True))
+        return roles[0] if roles else ''
+    except Exception:
+        return ''
+
+
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+def rfq_list(request):
+    from .permissions import IsRequesterOrProcurementClerk, IsRequester, IsProcurementClerk
+
+    if not IsRequesterOrProcurementClerk().has_permission(request, None):
+        return Response({'error': 'Forbidden.'}, status=403)
+
+    if request.method == 'GET':
+        # Procurement clerk: pending queue + RFQs they have already actioned.
+        if IsProcurementClerk().has_permission(request, None) and not IsRequester().has_permission(request, None):
+            qs = RFQ.objects.filter(
+                Q(status='Pending Procurement') | Q(events__actor_id=request.user.id)
+            ).distinct()
+        else:
+            qs = RFQ.objects.filter(requester_id=request.user.id)
+
+        status_filter = request.query_params.get('status')
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+
+        paginator = StandardPagination()
+        qs = qs.prefetch_related('items', 'events')
+        page = paginator.paginate_queryset(qs.order_by('-created_at'), request)
+        return paginator.get_paginated_response(RFQSerializer(page, many=True).data)
+
+    # POST – create RFQ (Requester only)
+    if not IsRequester().has_permission(request, None):
+        return Response({'error': 'Forbidden.'}, status=403)
+
+    data = request.data
+    rfq_type = data.get('type') or 'Supplier Payment (Normal)'
+    try:
+        amount_est = Decimal(str(data.get('amount_estimated', 0) or 0))
+    except Exception:
+        amount_est = Decimal('0')
+
+    with transaction.atomic():
+        rfq = RFQ.objects.create(
+            rfq_number=_generate_number('RFQ'),
+            type=rfq_type,
+            requester_id=request.user.id,
+            department=data.get('department') or getattr(request.user, 'department', ''),
+            cost_center=data.get('cost_center') or '',
+            budget_available=bool(data.get('budget_available', True)),
+            currency=data.get('currency') or 'USD',
+            description=data.get('description') or '',
+            justification=data.get('justification') or '',
+            amount_estimated=amount_est,
+            status='Draft',
+        )
+        for idx, item in enumerate(data.get('items', [])):
+            RFQItem.objects.create(
+                rfq=rfq,
+                order=item.get('order', idx + 1),
+                description=item.get('description') or '',
+                quantity=int(item.get('quantity', 1) or 1),
+                unit=item.get('unit') or 'Unit',
+            )
+
+        RFQEvent.objects.create(
+            rfq=rfq,
+            order=1,
+            status='Draft',
+            label='RFQ created (Draft)',
+            actor=request.user,
+            actor_name=getattr(request.user, 'name', '') or '',
+            actor_role=_primary_role(request.user),
+        )
+
+    return Response(RFQSerializer(rfq).data, status=201)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def rfq_detail(request, pk):
+    rfq = RFQ.objects.prefetch_related('items', 'events', 'quotes__items', 'quotes__attachments').filter(pk=pk).first()
+    if not rfq:
+        return Response({'error': 'Not found.'}, status=404)
+
+    return Response(RFQSerializer(rfq).data)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def rfq_submit_to_procurement(request, pk):
+    from .permissions import IsRequester
+
+    if not IsRequester().has_permission(request, None):
+        return Response({'error': 'Forbidden.'}, status=403)
+
+    rfq = RFQ.objects.get(pk=pk)
+    if rfq.requester_id != request.user.id:
+        return Response({'error': 'Forbidden.'}, status=403)
+    if rfq.status != 'Draft':
+        return Response({'error': 'RFQ must be in Draft status.'}, status=400)
+
+    rfq.status = 'Pending Procurement'
+    rfq.submitted_at = timezone.now()
+    rfq.save(update_fields=['status', 'submitted_at'])
+
+    RFQEvent.objects.create(
+        rfq=rfq,
+        order=2,
+        status='Pending Procurement',
+        label='Submitted to procurement',
+        actor=request.user,
+        actor_name=getattr(request.user, 'name', '') or '',
+        actor_role=_primary_role(request.user),
+    )
+
+    # ── Notifications (in-app + email) ───────────────────────────────────────
+    requester = request.user
+    message = f"Your RFQ {rfq.rfq_number} has been submitted to procurement for quotations."
+    AppNotification.objects.create(
+        recipient=requester,
+        title='RFQ Submitted to Procurement',
+        message=message,
+        type='submission',
+        requisition=None,
+        rfq=rfq,
+    )
+
+    procurement_clerks = User.objects.filter(roles__role='Procurement Clerk', active=True).distinct()
+    for clerk in procurement_clerks:
+        if clerk.id == requester.id:
+            continue
+        AppNotification.objects.create(
+            recipient=clerk,
+            title=f'RFQ Pending Quotations – {rfq.rfq_number}',
+            message=f"RFQ {rfq.rfq_number} is awaiting quotations from you and your team.",
+            type='submission',
+            requisition=None,
+            rfq=rfq,
+        )
+
+    # Best-effort email dispatch (only if SMTP configured)
+    config = get_smtp_config()
+    if config:
+        conn = get_connection(
+            backend='django.core.mail.backends.smtp.EmailBackend',
+            host=config.get('host'),
+            port=config.get('port', 587),
+            username=config.get('username') or None,
+            password=config.get('password') or None,
+            use_tls=config.get('use_tls', True),
+            fail_silently=False,
+        )
+        from django.core.mail import EmailMessage
+        from_email = config.get('from_email') or config.get('username') or 'noreply@localhost'
+        login_url = f"{settings.FRONTEND_BASE_URL}/login"
+        subject_req = f'RFQ Submitted to Procurement ({rfq.rfq_number})'
+        body_req = message + f"\n\nLogin: {login_url}\n"
+        try:
+            EmailMessage(
+                subject=subject_req,
+                body=body_req,
+                from_email=from_email,
+                to=[requester.email],
+                connection=conn,
+            ).send()
+        except Exception as e:
+            logger.warning("RFQ requester submit email failed for %s: %s", requester.email, str(e))
+
+        subject_clerk = f'RFQ Pending Quotations ({rfq.rfq_number})'
+        for clerk in procurement_clerks:
+            if not clerk.email:
+                continue
+            if clerk.id == requester.id:
+                continue
+            body = f"RFQ {rfq.rfq_number} is awaiting quotations.\n\nLogin: {login_url}\n"
+            try:
+                EmailMessage(
+                    subject=subject_clerk,
+                    body=body,
+                    from_email=from_email,
+                    to=[clerk.email],
+                    connection=conn,
+                ).send()
+            except Exception as e:
+                logger.warning("RFQ procurement submit email failed for %s: %s", clerk.email, str(e))
+    else:
+        logger.warning("RFQ submit email skipped: SMTP not configured.")
+
+    return Response(RFQSerializer(rfq).data)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def rfq_upload_quotes(request, pk):
+    from .permissions import IsProcurementClerk
+
+    if not IsProcurementClerk().has_permission(request, None):
+        return Response({'error': 'Forbidden.'}, status=403)
+
+    rfq = RFQ.objects.get(pk=pk)
+    if rfq.status != 'Pending Procurement':
+        return Response({'error': 'RFQ must be in Pending Procurement status.'}, status=400)
+
+    quotes = request.data.get('quotes')
+    if not isinstance(quotes, list) or not quotes:
+        return Response({'error': 'quotes[] is required.'}, status=400)
+
+    with transaction.atomic():
+        RFQQuote.objects.filter(rfq=rfq).delete()
+        for q in quotes:
+            supplier_id = q.get('supplier_id') or q.get('supplierId')
+            if not supplier_id:
+                return Response({'error': 'supplier_id is required for each quote.'}, status=400)
+            supplier = Supplier.objects.filter(pk=supplier_id, active=True, suspended=False).first()
+            if not supplier:
+                return Response({'error': f'Invalid or suspended supplier: {supplier_id}'}, status=400)
+            quote = RFQQuote.objects.create(
+                rfq=rfq,
+                created_by_id=request.user.id,
+                supplier=supplier,
+                supplier_name=supplier.name,
+                supplier_email=supplier.contact_email,
+                supplier_phone='',
+                supplier_address=supplier.physical_address,
+                supplier_contact=supplier.contact_person,
+                supplier_bank_name=q.get('supplier_bank_name') or q.get('supplierBankName') or '',
+                supplier_bank_account_name=q.get('supplier_bank_account_name') or q.get('supplierBankAccountName') or '',
+                supplier_bank_account_number=q.get('supplier_bank_account_number') or q.get('supplierBankAccountNumber') or '',
+                supplier_bank_branch=q.get('supplier_bank_branch') or q.get('supplierBankBranch') or '',
+                quote_currency=q.get('quote_currency') or q.get('quoteCurrency') or rfq.currency,
+                quote_total_amount=Decimal(str(q.get('quote_total_amount') or q.get('quoteTotalAmount') or 0)),
+                quote_notes=q.get('quote_notes') or q.get('quoteNotes') or '',
+                quote_valid_until=(
+                    parse_date(q.get('quote_valid_until') or q.get('quoteValidUntil'))
+                    if (q.get('quote_valid_until') or q.get('quoteValidUntil'))
+                    else None
+                ),
+            )
+
+            for it in q.get('items') or []:
+                rfq_item_id = it.get('rfq_item_id') or it.get('rfqItemId') or it.get('rfq_item') or it.get('rfqItem')
+                if rfq_item_id is None:
+                    continue
+                RFQQuoteItem.objects.create(
+                    quote=quote,
+                    rfq_item_id=rfq_item_id,
+                    description=it.get('description') or '',
+                    quantity=int(it.get('quantity', 1) or 1),
+                    unit=it.get('unit') or 'Unit',
+                    unit_price=Decimal(str(it.get('unit_price') or it.get('unitPrice') or 0)),
+                    line_total=Decimal(str(it.get('line_total') or it.get('lineTotal') or 0)),
+                )
+
+            for d in q.get('documents') or q.get('attachments') or []:
+                RFQQuoteAttachment.objects.create(
+                    quote=quote,
+                    name=d.get('name') or 'Quotation Document',
+                    type=d.get('type') or 'application/pdf',
+                    size=d.get('size') or '',
+                    uploaded_by=d.get('uploaded_by') or d.get('uploadedBy') or request.user.name,
+                    data_url=d.get('data_url') or d.get('dataUrl') or '',
+                    is_quote_document=bool(d.get('is_quote_document', True)),
+                )
+
+        # Optional event: quotes uploaded. Status doesn't change here, but it helps the timeline.
+        RFQEvent.objects.create(
+            rfq=rfq,
+            order=2,
+            status='Pending Procurement',
+            label='Quotation documents uploaded',
+            actor=request.user,
+            actor_name=getattr(request.user, 'name', '') or '',
+            actor_role=_primary_role(request.user),
+        )
+
+        # Notifications (in-app): requester and acting procurement clerk.
+        requester = rfq.requester
+        clerk = request.user
+        AppNotification.objects.create(
+            recipient=requester,
+            title=f'RFQ Quotations Uploaded – {rfq.rfq_number}',
+            message=f"Procurement uploaded supplier quotations for RFQ {rfq.rfq_number}.",
+            type='info',
+            requisition=None,
+            rfq=rfq,
+        )
+        AppNotification.objects.create(
+            recipient=clerk,
+            title=f'RFQ Quotations Uploaded – {rfq.rfq_number}',
+            message=f"You uploaded supplier quotations for RFQ {rfq.rfq_number}.",
+            type='info',
+            requisition=None,
+            rfq=rfq,
+        )
+
+    # Best-effort email dispatch (if SMTP configured)
+    config = get_smtp_config()
+    if config:
+        conn = get_connection(
+            backend='django.core.mail.backends.smtp.EmailBackend',
+            host=config.get('host'),
+            port=config.get('port', 587),
+            username=config.get('username') or None,
+            password=config.get('password') or None,
+            use_tls=config.get('use_tls', True),
+            fail_silently=False,
+        )
+        from django.core.mail import EmailMessage
+        from_email = config.get('from_email') or config.get('username') or 'noreply@localhost'
+        login_url = f"{settings.FRONTEND_BASE_URL}/login"
+        requester = rfq.requester
+        clerk = request.user
+        if getattr(requester, 'email', ''):
+            try:
+                EmailMessage(
+                    subject=f'RFQ Quotations Uploaded ({rfq.rfq_number})',
+                    body=f"Procurement uploaded supplier quotations for RFQ {rfq.rfq_number}.\n\nLogin: {login_url}\n",
+                    from_email=from_email,
+                    to=[requester.email],
+                    connection=conn,
+                ).send()
+            except Exception as e:
+                logger.warning("RFQ quote upload requester email failed for %s: %s", requester.email, str(e))
+        if getattr(clerk, 'email', ''):
+            try:
+                EmailMessage(
+                    subject=f'RFQ Quotations Uploaded ({rfq.rfq_number})',
+                    body=f"You uploaded supplier quotations for RFQ {rfq.rfq_number}.\n\nLogin: {login_url}\n",
+                    from_email=from_email,
+                    to=[clerk.email],
+                    connection=conn,
+                ).send()
+            except Exception as e:
+                logger.warning("RFQ quote upload actor email failed for %s: %s", clerk.email, str(e))
+    else:
+        logger.warning("RFQ quote upload email skipped: SMTP not configured.")
+
+    return Response(RFQSerializer(rfq).data)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def rfq_complete_quotes(request, pk):
+    from .permissions import IsProcurementClerk
+
+    if not IsProcurementClerk().has_permission(request, None):
+        return Response({'error': 'Forbidden.'}, status=403)
+
+    rfq = RFQ.objects.get(pk=pk)
+    if rfq.status == 'Pending Requester Selection':
+        # Idempotency: if the clerk clicked twice or state changed,
+        # treat this as already completed.
+        return Response(RFQSerializer(rfq).data, status=200)
+    if rfq.status != 'Pending Procurement':
+        return Response(
+            {'error': 'RFQ must be in Pending Procurement status.', 'current_status': rfq.status},
+            status=400,
+        )
+
+    rfq.status = 'Pending Requester Selection'
+    rfq.procurement_completed_at = timezone.now()
+    rfq.save(update_fields=['status', 'procurement_completed_at'])
+
+    RFQEvent.objects.create(
+        rfq=rfq,
+        order=3,
+        status='Pending Requester Selection',
+        label='Procurement completed (awaiting requester selection)',
+        actor=request.user,
+        actor_name=getattr(request.user, 'name', '') or '',
+        actor_role=_primary_role(request.user),
+    )
+
+    # Notifications: requester and the clerk who acted.
+    requester = rfq.requester
+    clerk = request.user
+    AppNotification.objects.create(
+        recipient=requester,
+        title=f'RFQ Ready for Selection – {rfq.rfq_number}',
+        message=f"Procurement has completed quotations for RFQ {rfq.rfq_number}. Please select a supplier quote to convert it into a requisition.",
+        type='approval',
+        requisition=None,
+        rfq=rfq,
+    )
+    AppNotification.objects.create(
+        recipient=clerk,
+        title=f'RFQ Completed – {rfq.rfq_number}',
+        message=f"You completed procurement for RFQ {rfq.rfq_number}. The requester can now select the supplier quote.",
+        type='info',
+        requisition=None,
+        rfq=rfq,
+    )
+
+    # Best-effort email (if SMTP configured)
+    config = get_smtp_config()
+    if config:
+        conn = get_connection(
+            backend='django.core.mail.backends.smtp.EmailBackend',
+            host=config.get('host'),
+            port=config.get('port', 587),
+            username=config.get('username') or None,
+            password=config.get('password') or None,
+            use_tls=config.get('use_tls', True),
+            fail_silently=False,
+        )
+        from django.core.mail import EmailMessage
+        from_email = config.get('from_email') or config.get('username') or 'noreply@localhost'
+        login_url = f"{settings.FRONTEND_BASE_URL}/login"
+        try:
+            EmailMessage(
+                subject=f'RFQ Ready for Selection ({rfq.rfq_number})',
+                body=f"RFQ {rfq.rfq_number} is ready for requester selection.\n\nLogin: {login_url}\n",
+                from_email=from_email,
+                to=[requester.email],
+                connection=conn,
+            ).send()
+        except Exception as e:
+            logger.warning("RFQ requester complete email failed for %s: %s", requester.email, str(e))
+        try:
+            if clerk.email:
+                EmailMessage(
+                    subject=f'RFQ Completed ({rfq.rfq_number})',
+                    body=f"You completed procurement for RFQ {rfq.rfq_number}.\n\nLogin: {login_url}\n",
+                    from_email=from_email,
+                    to=[clerk.email],
+                    connection=conn,
+                ).send()
+        except Exception as e:
+            logger.warning("RFQ actor complete email failed for %s: %s", clerk.email, str(e))
+    else:
+        logger.warning("RFQ complete email skipped: SMTP not configured.")
+    return Response(RFQSerializer(rfq).data)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def rfq_convert_to_requisition(request, pk):
+    from .permissions import IsRequester
+
+    if not IsRequester().has_permission(request, None):
+        return Response({'error': 'Forbidden.'}, status=403)
+
+    rfq = RFQ.objects.select_related('requester').get(pk=pk)
+    if rfq.requester_id != request.user.id:
+        return Response({'error': 'Forbidden.'}, status=403)
+    if rfq.status != 'Pending Requester Selection':
+        return Response({'error': 'RFQ must be in Pending Requester Selection status.'}, status=400)
+
+    quote_id = request.data.get('quote_id') or request.data.get('quoteId')
+    if not quote_id:
+        return Response({'error': 'quote_id is required.'}, status=400)
+    selected_supplier_justification = (
+        request.data.get('selected_supplier_justification')
+        or request.data.get('selectedSupplierJustification')
+        or ''
+    ).strip()
+    if not selected_supplier_justification:
+        return Response({'error': 'selected_supplier_justification is required.'}, status=400)
+
+    quote = RFQQuote.objects.filter(rfq=rfq, pk=quote_id).prefetch_related('items').first()
+    if not quote:
+        return Response({'error': 'Quote not found for this RFQ.'}, status=404)
+
+    template = _approval_chain_template(rfq.type)
+    first_role = template[0]['role'] if template else None
+
+    with transaction.atomic():
+        rfq.selected_quote = quote
+        rfq.status = 'Converted'
+        rfq.converted_at = timezone.now()
+        rfq.selected_supplier_justification = selected_supplier_justification
+        rfq.save(update_fields=['selected_quote', 'status', 'converted_at', 'selected_supplier_justification'])
+
+        req_prefix = 'PC' if rfq.type == 'Petty Cash' else 'IR'
+        req_number = _generate_number(req_prefix)
+
+        req = Requisition.objects.create(
+            rfq=rfq,
+            req_number=req_number,
+            type=rfq.type,
+            description=rfq.description,
+            justification=rfq.justification,
+            amount=quote.quote_total_amount,
+            currency=quote.quote_currency,
+            department=rfq.department,
+            cost_center=rfq.cost_center,
+            budget_available=rfq.budget_available,
+            requester_id=rfq.requester_id,
+            status='Submitted',
+            current_approver_role=first_role,
+            is_capex=True if rfq.type == 'High-Value/CAPEX' else False,
+            po_generated=False,
+            supplier=quote.supplier_name,
+            supplier_email=quote.supplier_email,
+            supplier_phone=quote.supplier_phone,
+            supplier_address=quote.supplier_address,
+            supplier_contact=quote.supplier_contact,
+            supplier_bank_name=quote.supplier_bank_name,
+            supplier_bank_account_name=quote.supplier_bank_account_name,
+            supplier_bank_account_number=quote.supplier_bank_account_number,
+            supplier_bank_branch=quote.supplier_bank_branch,
+            suppliers_json=None,
+            preferred_supplier_index=None,
+            preferred_supplier_justification=selected_supplier_justification,
+            vehicle_reg='',
+            fuel_type='',
+            fuel_quantity=None,
+            travel_destination='',
+            travel_start_date=None,
+            travel_end_date=None,
+            asset_type='',
+            asset_specs='',
+            maintenance_item='',
+            maintenance_urgency='',
+        )
+
+        for idx, step in enumerate(template):
+            ApprovalStep.objects.create(
+                requisition=req,
+                order=idx + 1,
+                role=step['role'],
+                label=step['label'],
+                status='Pending',
+            )
+
+        for it in quote.items.all():
+            POItem.objects.create(
+                requisition=req,
+                description=it.description,
+                quantity=it.quantity,
+                unit=it.unit,
+                unit_price=it.unit_price,
+                line_total=it.line_total,
+            )
+
+        roles = request.user.roles.values_list('role', flat=True)
+        primary_role = roles[0] if roles else ''
+        AuditEntry.objects.create(
+            action='RFQ Converted',
+            user=request.user,
+            user_id_str=str(request.user.id),
+            user_name=getattr(request.user, 'name', '') or '',
+            user_role=primary_role,
+            details=f"RFQ {rfq.rfq_number} converted into requisition {req.req_number}.",
+            requisition=req,
+        )
+
+        RFQEvent.objects.create(
+            rfq=rfq,
+            order=4,
+            status='Converted',
+            label=(
+                f"Supplier selected: {quote.supplier_name or '—'}; "
+                f"justification: {selected_supplier_justification}. "
+                "RFQ converted into requisition."
+            ),
+            actor=request.user,
+            actor_name=getattr(request.user, 'name', '') or '',
+            actor_role=_primary_role(request.user),
+        )
+
+        # Notifications (in-app): requester and procurement clerks after conversion.
+        AppNotification.objects.create(
+            recipient=request.user,
+            title=f'RFQ Converted – {rfq.rfq_number}',
+            message=f'Your RFQ {rfq.rfq_number} has been converted into requisition {req.req_number}.',
+            type='info',
+            requisition=req,
+            rfq=rfq,
+        )
+        procurement_clerks = User.objects.filter(roles__role='Procurement Clerk', active=True).exclude(id=request.user.id).distinct()
+        for clerk in procurement_clerks:
+            AppNotification.objects.create(
+                recipient=clerk,
+                title=f'RFQ Converted – {rfq.rfq_number}',
+                message=f"Requester selected a supplier and RFQ {rfq.rfq_number} was converted into requisition {req.req_number}.",
+                type='info',
+                requisition=req,
+                rfq=rfq,
+            )
+
+        config = get_smtp_config()
+        if config:
+            conn = get_connection(
+                backend='django.core.mail.backends.smtp.EmailBackend',
+                host=config.get('host'),
+                port=config.get('port', 587),
+                username=config.get('username') or None,
+                password=config.get('password') or None,
+                use_tls=config.get('use_tls', True),
+                fail_silently=False,
+            )
+            from django.core.mail import EmailMessage
+            from_email = config.get('from_email') or config.get('username') or 'noreply@localhost'
+            if getattr(request.user, 'email', ''):
+                try:
+                    EmailMessage(
+                        subject=f'RFQ Converted ({rfq.rfq_number})',
+                        body=f'RFQ {rfq.rfq_number} converted into requisition {req.req_number}.\n\nLogin: {settings.FRONTEND_BASE_URL}/login\n',
+                        from_email=from_email,
+                        to=[request.user.email],
+                        connection=conn,
+                    ).send()
+                except Exception as e:
+                    logger.warning("RFQ convert email failed for %s: %s", request.user.email, str(e))
+            for clerk in procurement_clerks:
+                if not clerk.email:
+                    continue
+                try:
+                    EmailMessage(
+                        subject=f'RFQ Converted ({rfq.rfq_number})',
+                        body=f"Requester selected a supplier and RFQ {rfq.rfq_number} converted into requisition {req.req_number}.\n\nLogin: {settings.FRONTEND_BASE_URL}/login\n",
+                        from_email=from_email,
+                        to=[clerk.email],
+                        connection=conn,
+                    ).send()
+                except Exception as e:
+                    logger.warning("RFQ convert procurement email failed for %s: %s", clerk.email, str(e))
+        else:
+            logger.warning("RFQ convert email skipped: SMTP not configured.")
+
+    return Response(RequisitionDetailSerializer(req).data)
+
+
+# ─── Supplier Master Data (Procurement) ───────────────────────────────────────
+
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+def supplier_list(request):
+    from .permissions import IsProcurementClerk
+
+    if request.method == 'GET':
+        qs = Supplier.objects.all().order_by('name', 'id')
+        status_param = (request.query_params.get('status') or '').strip().lower()
+        if status_param == 'active':
+            qs = qs.filter(active=True, suspended=False)
+        elif status_param == 'suspended':
+            qs = qs.filter(suspended=True)
+        q = (request.query_params.get('q') or '').strip()
+        if q:
+            qs = qs.filter(Q(name__icontains=q) | Q(category__icontains=q) | Q(contact_person__icontains=q))
+        paginator = StandardPagination()
+        page = paginator.paginate_queryset(qs, request)
+        return paginator.get_paginated_response(SupplierSerializer(page, many=True).data)
+
+    if not IsProcurementClerk().has_permission(request, None):
+        return Response({'error': 'Forbidden.'}, status=403)
+
+    data = request.data
+    payload = {
+        'name': (data.get('name') or '').strip(),
+        'category': _normalize_supplier_category(data.get('category') or 'Other'),
+        'physical_address': (data.get('physical_address') or data.get('physicalAddress') or '').strip(),
+        'contact_email': (data.get('contact_email') or data.get('contactEmail') or '').strip(),
+        'contact_person': (data.get('contact_person') or data.get('contactPerson') or '').strip(),
+        'active': bool(data.get('active', True)),
+        'suspended': bool(data.get('suspended', False)),
+        'created_by': request.user.id,
+    }
+    serializer = SupplierSerializer(data=payload)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=400)
+    supplier = serializer.save()
+    return Response(SupplierSerializer(supplier).data, status=201)
+
+
+@api_view(['PATCH'])
+@permission_classes([IsAuthenticated])
+def supplier_detail(request, pk):
+    from .permissions import IsProcurementClerk
+
+    if not IsProcurementClerk().has_permission(request, None):
+        return Response({'error': 'Forbidden.'}, status=403)
+
+    supplier = Supplier.objects.filter(pk=pk).first()
+    if not supplier:
+        return Response({'error': 'Not found.'}, status=404)
+
+    raw = request.data
+    data = {}
+    if 'name' in raw:
+        data['name'] = (raw.get('name') or '').strip()
+    if 'category' in raw:
+        data['category'] = _normalize_supplier_category(raw.get('category') or 'Other')
+    if 'physical_address' in raw or 'physicalAddress' in raw:
+        data['physical_address'] = (raw.get('physical_address') or raw.get('physicalAddress') or '').strip()
+    if 'contact_email' in raw or 'contactEmail' in raw:
+        data['contact_email'] = (raw.get('contact_email') or raw.get('contactEmail') or '').strip()
+    if 'contact_person' in raw or 'contactPerson' in raw:
+        data['contact_person'] = (raw.get('contact_person') or raw.get('contactPerson') or '').strip()
+    if 'active' in raw:
+        data['active'] = bool(raw.get('active'))
+    if 'suspended' in raw:
+        data['suspended'] = bool(raw.get('suspended'))
+
+    serializer = SupplierSerializer(supplier, data=data, partial=True)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=400)
+    serializer.save()
+    return Response(serializer.data)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def supplier_bulk_create(request):
+    from .permissions import IsProcurementClerk
+
+    if not IsProcurementClerk().has_permission(request, None):
+        return Response({'error': 'Forbidden.'}, status=403)
+
+    rows = request.data.get('suppliers')
+    if not isinstance(rows, list) or not rows:
+        return Response({'error': 'suppliers[] is required.'}, status=400)
+
+    existing = Supplier.objects.all().values('name', 'contact_email')
+    existing_name_keys = {((x.get('name') or '').strip().lower()) for x in existing if (x.get('name') or '').strip()}
+    existing_email_keys = {((x.get('contact_email') or '').strip().lower()) for x in existing if (x.get('contact_email') or '').strip()}
+
+    seen_name_keys = set()
+    seen_email_keys = set()
+    created = []
+    duplicates = []
+    for idx, row in enumerate(rows):
+        payload = {
+            'name': (row.get('name') or '').strip(),
+            'category': _normalize_supplier_category(row.get('category') or 'Other'),
+            'physical_address': (row.get('physical_address') or row.get('physicalAddress') or '').strip(),
+            'contact_email': (row.get('contact_email') or row.get('contactEmail') or '').strip(),
+            'contact_person': (row.get('contact_person') or row.get('contactPerson') or '').strip(),
+            'active': bool(row.get('active', True)),
+            'suspended': bool(row.get('suspended', False)),
+            'created_by': request.user.id,
+        }
+        name_key = payload['name'].lower()
+        email_key = payload['contact_email'].lower()
+        duplicate_reasons = []
+        if name_key and (name_key in existing_name_keys or name_key in seen_name_keys):
+            duplicate_reasons.append('name')
+        if email_key and (email_key in existing_email_keys or email_key in seen_email_keys):
+            duplicate_reasons.append('contact_email')
+        if duplicate_reasons:
+            duplicates.append({
+                'row': idx + 1,
+                'name': payload['name'],
+                'contact_email': payload['contact_email'],
+                'reasons': duplicate_reasons,
+            })
+            continue
+        serializer = SupplierSerializer(data=payload)
+        if not serializer.is_valid():
+            duplicates.append({
+                'row': idx + 1,
+                'name': payload['name'],
+                'contact_email': payload['contact_email'],
+                'reasons': ['invalid_row'],
+                'details': serializer.errors,
+            })
+            continue
+        supplier = serializer.save()
+        created.append(supplier)
+        if name_key:
+            seen_name_keys.add(name_key)
+        if email_key:
+            seen_email_keys.add(email_key)
+
+    status_code = 201 if created else 200
+    return Response(
+        {
+            'created_count': len(created),
+            'skipped_count': len(duplicates),
+            'duplicates': duplicates,
+            'suppliers': SupplierSerializer(created, many=True).data,
+        },
+        status=status_code,
+    )
+
+
+# ─── Department Budgets (Annual) ──────────────────────────────────────────────
+
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+def budget_list(request):
+    from .permissions import HasRole
+
+    can_view = HasRole()
+    can_view.required_roles = ('Financial Controller', 'General Manager', 'Accountant', 'Department Manager')
+    if not can_view.has_permission(request, None):
+        return Response({'error': 'Forbidden.'}, status=403)
+
+    year = int(request.query_params.get('year') or timezone.now().year)
+    if request.method == 'GET':
+        qs = DepartmentBudget.objects.filter(year=year).order_by('department')
+        return Response(DepartmentBudgetSerializer(qs, many=True).data)
+
+    can_manage = HasRole()
+    can_manage.required_roles = ('Financial Controller',)
+    if not can_manage.has_permission(request, None):
+        return Response({'error': 'Forbidden.'}, status=403)
+
+    data = request.data
+    department = (data.get('department') or '').strip()
+    if not department:
+        return Response({'error': 'department is required.'}, status=400)
+    payload = {
+        'year': int(data.get('year') or year),
+        'department': department,
+        'usd_budget': data.get('usd_budget') or data.get('usdBudget') or 0,
+        'zig_budget': data.get('zig_budget') or data.get('zigBudget') or 0,
+    }
+    existing = DepartmentBudget.objects.filter(year=payload['year'], department=payload['department']).first()
+    serializer = DepartmentBudgetSerializer(existing, data=payload, partial=bool(existing))
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=400)
+    budget = serializer.save(configured_by=request.user)
+    return Response(DepartmentBudgetSerializer(budget).data, status=200 if existing else 201)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def budget_stats(request):
+    from .permissions import HasRole
+
+    can_view = HasRole()
+    can_view.required_roles = ('Financial Controller', 'General Manager', 'Accountant', 'Department Manager')
+    if not can_view.has_permission(request, None):
+        return Response({'error': 'Forbidden.'}, status=403)
+
+    year = int(request.query_params.get('year') or timezone.now().year)
+    rows = DepartmentBudget.objects.filter(year=year).order_by('department')
+    reqs = Requisition.objects.filter(created_at__year=year, status='Paid')
+
+    is_dept_manager_only = (
+        request.user.roles.filter(role='Department Manager').exists()
+        and not request.user.roles.filter(role__in=['Financial Controller', 'General Manager', 'Accountant']).exists()
+    )
+    if is_dept_manager_only:
+        rows = rows.filter(department=request.user.department)
+        reqs = reqs.filter(department=request.user.department)
+
+    by_dept_consumed = {}
+    monthly = {}
+    for r in reqs:
+        key = r.department
+        if key not in by_dept_consumed:
+            by_dept_consumed[key] = {'usd': 0.0, 'zig': 0.0}
+        paid_dt = r.paid_at or r.updated_at or r.created_at
+        month_key = f"{paid_dt.year:04d}-{paid_dt.month:02d}"
+        if month_key not in monthly:
+            monthly[month_key] = {'usd_consumed': 0.0, 'zig_consumed': 0.0}
+        if (r.currency or '').upper() == 'ZIG':
+            by_dept_consumed[key]['zig'] += float(r.amount or 0)
+            monthly[month_key]['zig_consumed'] += float(r.amount or 0)
+        else:
+            by_dept_consumed[key]['usd'] += float(r.amount or 0)
+            monthly[month_key]['usd_consumed'] += float(r.amount or 0)
+
+    departments = []
+    totals = {'usd_budget': 0.0, 'zig_budget': 0.0, 'usd_consumed': 0.0, 'zig_consumed': 0.0}
+    alerts = []
+    for b in rows:
+        consumed = by_dept_consumed.get(b.department, {'usd': 0.0, 'zig': 0.0})
+        usd_budget = float(b.usd_budget or 0)
+        zig_budget = float(b.zig_budget or 0)
+        usd_consumed = consumed['usd']
+        zig_consumed = consumed['zig']
+        departments.append({
+            'department': b.department,
+            'year': b.year,
+            'usd_budget': usd_budget,
+            'zig_budget': zig_budget,
+            'usd_consumed': usd_consumed,
+            'zig_consumed': zig_consumed,
+            'usd_remaining': usd_budget - usd_consumed,
+            'zig_remaining': zig_budget - zig_consumed,
+            'usd_utilization_pct': (usd_consumed / usd_budget * 100.0) if usd_budget > 0 else 0.0,
+            'zig_utilization_pct': (zig_consumed / zig_budget * 100.0) if zig_budget > 0 else 0.0,
+        })
+        usd_pct = (usd_consumed / usd_budget * 100.0) if usd_budget > 0 else 0.0
+        zig_pct = (zig_consumed / zig_budget * 100.0) if zig_budget > 0 else 0.0
+        if usd_pct >= 80.0:
+            alerts.append({
+                'scope': 'department',
+                'department': b.department,
+                'currency': 'USD',
+                'utilization_pct': usd_pct,
+                'threshold': 90 if usd_pct >= 90.0 else 80,
+                'level': 'critical' if usd_pct >= 90.0 else 'warning',
+                'message': f"{b.department} has used {usd_pct:.1f}% of USD budget.",
+            })
+        if zig_pct >= 80.0:
+            alerts.append({
+                'scope': 'department',
+                'department': b.department,
+                'currency': 'ZIG',
+                'utilization_pct': zig_pct,
+                'threshold': 90 if zig_pct >= 90.0 else 80,
+                'level': 'critical' if zig_pct >= 90.0 else 'warning',
+                'message': f"{b.department} has used {zig_pct:.1f}% of ZIG budget.",
+            })
+        totals['usd_budget'] += usd_budget
+        totals['zig_budget'] += zig_budget
+        totals['usd_consumed'] += usd_consumed
+        totals['zig_consumed'] += zig_consumed
+
+    org_usd_pct = (totals['usd_consumed'] / totals['usd_budget'] * 100.0) if totals['usd_budget'] > 0 else 0.0
+    org_zig_pct = (totals['zig_consumed'] / totals['zig_budget'] * 100.0) if totals['zig_budget'] > 0 else 0.0
+    if org_usd_pct >= 80.0:
+        alerts.append({
+            'scope': 'organisation',
+            'department': None,
+            'currency': 'USD',
+            'utilization_pct': org_usd_pct,
+            'threshold': 90 if org_usd_pct >= 90.0 else 80,
+            'level': 'critical' if org_usd_pct >= 90.0 else 'warning',
+            'message': f"Organisation has used {org_usd_pct:.1f}% of USD budget.",
+        })
+    if org_zig_pct >= 80.0:
+        alerts.append({
+            'scope': 'organisation',
+            'department': None,
+            'currency': 'ZIG',
+            'utilization_pct': org_zig_pct,
+            'threshold': 90 if org_zig_pct >= 90.0 else 80,
+            'level': 'critical' if org_zig_pct >= 90.0 else 'warning',
+            'message': f"Organisation has used {org_zig_pct:.1f}% of ZIG budget.",
+        })
+
+    trend = []
+    for m in range(1, 13):
+        k = f"{year:04d}-{m:02d}"
+        val = monthly.get(k, {'usd_consumed': 0.0, 'zig_consumed': 0.0})
+        trend.append({
+            'month': k,
+            'usd_consumed': val['usd_consumed'],
+            'zig_consumed': val['zig_consumed'],
+        })
+
+    return Response({
+        'year': year,
+        'departments': departments,
+        'alerts': alerts,
+        'monthly_trend': trend,
+        'totals': {
+            **totals,
+            'usd_remaining': totals['usd_budget'] - totals['usd_consumed'],
+            'zig_remaining': totals['zig_budget'] - totals['zig_consumed'],
+            'usd_utilization_pct': (totals['usd_consumed'] / totals['usd_budget'] * 100.0) if totals['usd_budget'] > 0 else 0.0,
+            'zig_utilization_pct': (totals['zig_consumed'] / totals['zig_budget'] * 100.0) if totals['zig_budget'] > 0 else 0.0,
+        },
+    })
 
 
 # ─── Purchase Orders ──────────────────────────────────────────────────────────
@@ -627,7 +1643,7 @@ def generate_po(request, req_pk):
 def notification_list(request):
     if request.method == 'GET':
         recipient_id = request.query_params.get('recipient_id')
-        qs = AppNotification.objects.select_related('recipient', 'requisition').all()
+        qs = AppNotification.objects.select_related('recipient', 'requisition', 'rfq').all()
         if recipient_id:
             qs = qs.filter(recipient_id=recipient_id)
         return Response(AppNotificationSerializer(qs, many=True).data)

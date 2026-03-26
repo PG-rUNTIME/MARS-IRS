@@ -47,6 +47,10 @@ export function NotificationsPage() {
 
   const handleClick = (notif: AppNotification) => {
     void markNotificationRead(notif.id);
+    if (notif.rfqId) {
+      navigate(`/rfqs/${notif.rfqId}`);
+      return;
+    }
     if (notif.requisitionId) {
       navigate(`/requisitions/${notif.requisitionId}`);
     }

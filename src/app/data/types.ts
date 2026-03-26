@@ -21,8 +21,16 @@ export type UserRole =
   | 'General Manager'
   | 'Financial Controller'
   | 'Head of Operations'
+  | 'Procurement Clerk'
   | 'System Administrator'
   | 'Auditor';
+
+export type RFQStatus =
+  | 'Draft'
+  | 'Pending Procurement'
+  | 'Pending Requester Selection'
+  | 'Converted'
+  | 'Cancelled';
 
 export type Currency = 'USD' | 'ZIG';
 
@@ -104,6 +112,7 @@ export interface POItem {
 export interface Requisition {
   id: string;
   reqNumber: string;
+  rfqId?: string;
   type: RequisitionType;
   description: string;
   justification: string;
@@ -183,7 +192,124 @@ export interface AppNotification {
   timestamp: string;
   read: boolean;
   requisitionId?: string;
+  rfqId?: string;
   type: 'submission' | 'approval' | 'rejection' | 'payment' | 'info';
+}
+
+// ─── RFQ (Request for Quotation) ─────────────────────────────────────────────
+
+export interface RFQItem {
+  id: string;
+  order: number;
+  description: string;
+  quantity: number;
+  unit: string;
+}
+
+export interface RFQQuoteItem {
+  id: string;
+  rfqItemId: string;
+  description: string;
+  quantity: number;
+  unit: string;
+  unitPrice: number;
+  lineTotal: number;
+}
+
+export interface RFQQuoteAttachment {
+  id: string;
+  name: string;
+  type: string;
+  size: string;
+  uploadedBy: string;
+  uploadedAt: string;
+  dataUrl?: string;
+  filePath?: string;
+  isQuoteDocument: boolean;
+}
+
+export interface RFQQuote {
+  id: string;
+  createdBy?: string;
+  supplierId?: string;
+  supplierName: string;
+  supplierEmail: string;
+  supplierPhone: string;
+  supplierAddress: string;
+  supplierContact: string;
+  supplierBankName: string;
+  supplierBankAccountName: string;
+  supplierBankAccountNumber: string;
+  supplierBankBranch: string;
+  quoteCurrency: string;
+  quoteTotalAmount: number;
+  quoteNotes: string;
+  quoteValidUntil?: string;
+  items: RFQQuoteItem[];
+  attachments: RFQQuoteAttachment[];
+}
+
+export interface RFQ {
+  id: string;
+  rfqNumber: string;
+  type: RequisitionType;
+  requesterId: string;
+  requesterName?: string;
+  requesterEmail?: string;
+  department: string;
+  costCenter: string;
+  budgetAvailable: boolean;
+  currency: string;
+  description: string;
+  justification: string;
+  amountEstimated: number;
+  status: RFQStatus;
+  selectedQuoteId?: string;
+  selectedSupplierName?: string;
+  selectedSupplierJustification?: string;
+  submittedAt?: string;
+  procurementCompletedAt?: string;
+  convertedAt?: string;
+  convertedRequisitionNumber?: string;
+  events: Array<{
+    id: string;
+    order: number;
+    status: string;
+    label: string;
+    actorId?: string;
+    actorName: string;
+    actorRole?: string;
+    timestamp: string;
+  }>;
+  items: RFQItem[];
+  quotes: RFQQuote[];
+}
+
+export interface Supplier {
+  id: string;
+  name: string;
+  category: string;
+  physicalAddress: string;
+  contactEmail: string;
+  contactPerson: string;
+  active: boolean;
+  suspended: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DepartmentBudget {
+  id: string;
+  year: number;
+  department: string;
+  usdBudget: number;
+  zigBudget: number;
+  usdConsumed: number;
+  zigConsumed: number;
+  usdRemaining: number;
+  zigRemaining: number;
+  usdUtilizationPct: number;
+  zigUtilizationPct: number;
 }
 
 export interface DelegationRecord {

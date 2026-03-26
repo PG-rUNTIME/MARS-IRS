@@ -21,6 +21,19 @@ urlpatterns = [
     path('attachments/<int:pk>/download/', views.attachment_download),
     path('requisitions/<int:req_pk>/generate-po/', views.generate_po),
 
+    # RFQ (Request for Quotation)
+    path('rfqs/', views.rfq_list),
+    path('rfqs/<int:pk>/', views.rfq_detail),
+    path('rfqs/<int:pk>/submit/', views.rfq_submit_to_procurement),
+    path('rfqs/<int:pk>/quotes/', views.rfq_upload_quotes),
+    path('rfqs/<int:pk>/quotes-complete/', views.rfq_complete_quotes),
+    path('rfqs/<int:pk>/convert/', views.rfq_convert_to_requisition),
+    path('suppliers/', views.supplier_list),
+    path('suppliers/<int:pk>/', views.supplier_detail),
+    path('suppliers/bulk/', views.supplier_bulk_create),
+    path('budgets/', views.budget_list),
+    path('budgets/stats/', views.budget_stats),
+
     # Purchase Orders
     path('purchase-orders/', views.purchase_order_list),
     path('purchase-orders/<int:pk>/', views.purchase_order_detail),

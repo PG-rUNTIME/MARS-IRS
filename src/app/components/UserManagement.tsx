@@ -5,7 +5,7 @@ import { formatDate } from './shared/StatusBadge';
 import type { User, UserRole } from '../data/types';
 import { ROLE_CAPABILITIES } from '../data/roleCapabilities';
 
-const ROLES: UserRole[] = ['Requester', 'Department Manager', 'Accountant', 'General Manager', 'Financial Controller', 'Head of Operations', 'System Administrator', 'Auditor'];
+const ROLES: UserRole[] = ['Requester', 'Department Manager', 'Accountant', 'General Manager', 'Financial Controller', 'Head of Operations', 'Procurement Clerk', 'System Administrator', 'Auditor'];
 const DEPARTMENTS = ['Operations', 'Logistics', 'Human Resources', 'Finance', 'Administration', 'Medical/Clinical', 'Information Technology', 'Management', 'Compliance'];
 
 const ROLE_COLORS: Record<UserRole, string> = {
@@ -15,6 +15,7 @@ const ROLE_COLORS: Record<UserRole, string> = {
   'General Manager': 'bg-orange-100 text-orange-700',
   'Financial Controller': 'bg-red-100 text-red-700',
   'Head of Operations': 'bg-green-100 text-green-700',
+  'Procurement Clerk': 'bg-sky-100 text-sky-700',
   'System Administrator': 'bg-slate-100 text-slate-700',
   'Auditor': 'bg-teal-100 text-teal-700',
 };

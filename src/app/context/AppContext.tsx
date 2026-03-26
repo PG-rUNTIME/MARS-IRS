@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import type {
   Requisition, PurchaseOrder, AppNotification, AuditEntry, User,
-  RequisitionType, UserRole, ApprovalStep, POItem, Attachment, SupplierEntry,
+  RequisitionType, UserRole, ApprovalStep, POItem, Attachment, SupplierEntry, RFQ,
 } from '../data/types';
 import { getPrimaryRole, FINANCE_ACTION_ROLES } from '../data/roleCapabilities';
 import {
@@ -11,6 +11,9 @@ import {
   fetchRequisitions, fetchRequisition, createRequisition as apiCreateRequisition,
   updateRequisition as apiUpdateRequisition, addComment as apiAddComment,
   addAttachment as apiAddAttachment, generatePO as apiGeneratePO,
+  fetchRFQs, fetchRFQ, createRFQ as apiCreateRFQ, submitRFQ as apiSubmitRFQ,
+  uploadRFQQuotes as apiUploadRFQQuotes, completeRFQQuotes as apiCompleteRFQQuotes,
+  convertRFQToRequisition as apiConvertRFQToRequisition,
   fetchPurchaseOrders,
   fetchNotifications, createNotification as apiCreateNotification,
   markNotificationRead as apiMarkRead, markAllNotificationsRead as apiMarkAllRead,
@@ -87,6 +90,7 @@ function mapRequisition(r: ApiRequisition): Requisition {
   return {
     id: String(r.id),
     reqNumber: r.req_number,
+    rfqId: r.rfq_id != null ? String(r.rfq_id) : undefined,
     type: r.type as RequisitionType,
     description: r.description,
     justification: r.justification,
@@ -182,7 +186,89 @@ function mapNotification(n: ApiNotification): AppNotification {
     timestamp: n.timestamp,
     read: n.read,
     requisitionId: n.requisition_id != null ? String(n.requisition_id) : undefined,
+    rfqId: n.rfq_id != null ? String(n.rfq_id) : undefined,
     type: n.type as AppNotification['type'],
+  };
+}
+
+function mapRFQ(r: any): RFQ {
+  return {
+    id: String(r.id),
+    rfqNumber: r.rfq_number,
+    type: r.type as RequisitionType,
+    requesterId: String(r.requester_id),
+    requesterName: r.requester_name || undefined,
+    requesterEmail: r.requester_email || undefined,
+    department: r.department,
+    costCenter: r.cost_center,
+    budgetAvailable: r.budget_available,
+    currency: r.currency,
+    description: r.description,
+    justification: r.justification,
+    amountEstimated: Number(r.amount_estimated),
+    status: r.status as RFQ['status'],
+    selectedQuoteId: r.selected_quote_id ? String(r.selected_quote_id) : undefined,
+    selectedSupplierName: r.selected_supplier_name || undefined,
+    selectedSupplierJustification: r.selected_supplier_justification || undefined,
+    submittedAt: r.submitted_at || undefined,
+    procurementCompletedAt: r.procurement_completed_at || undefined,
+    convertedAt: r.converted_at || undefined,
+    convertedRequisitionNumber: r.converted_requisition_number || undefined,
+    events: (r.events || []).map((e: any) => ({
+      id: String(e.id),
+      order: e.order,
+      status: e.status,
+      label: e.label,
+      actorId: e.actor_id != null ? String(e.actor_id) : undefined,
+      actorName: e.actor_name || '',
+      actorRole: e.actor_role || undefined,
+      timestamp: e.timestamp,
+    })),
+    items: (r.items || []).map((it: any) => ({
+      id: String(it.id),
+      order: it.order,
+      description: it.description,
+      quantity: it.quantity,
+      unit: it.unit,
+    })),
+    quotes: (r.quotes || []).map((q: any) => ({
+      id: String(q.id),
+      createdBy: q.created_by != null ? String(q.created_by) : undefined,
+      supplierId: q.supplier != null ? String(q.supplier) : undefined,
+      supplierName: q.supplier_name,
+      supplierEmail: q.supplier_email,
+      supplierPhone: q.supplier_phone,
+      supplierAddress: q.supplier_address,
+      supplierContact: q.supplier_contact,
+      supplierBankName: q.supplier_bank_name,
+      supplierBankAccountName: q.supplier_bank_account_name,
+      supplierBankAccountNumber: q.supplier_bank_account_number,
+      supplierBankBranch: q.supplier_bank_branch,
+      quoteCurrency: q.quote_currency,
+      quoteTotalAmount: Number(q.quote_total_amount),
+      quoteNotes: q.quote_notes,
+      quoteValidUntil: q.quote_valid_until || undefined,
+      items: (q.items || []).map((it: any) => ({
+        id: String(it.id),
+        rfqItemId: String(it.rfq_item_id),
+        description: it.description,
+        quantity: it.quantity,
+        unit: it.unit,
+        unitPrice: Number(it.unit_price),
+        lineTotal: Number(it.line_total),
+      })),
+      attachments: (q.attachments || []).map((a: any) => ({
+        id: String(a.id),
+        name: a.name,
+        type: a.type,
+        size: a.size,
+        uploadedBy: a.uploaded_by,
+        uploadedAt: a.uploaded_at,
+        dataUrl: a.data_url || undefined,
+        filePath: a.file_path || undefined,
+        isQuoteDocument: Boolean(a.is_quote_document),
+      })),
+    })),
   };
 }
 
@@ -211,6 +297,7 @@ function now() { return new Date().toISOString(); }
 interface AppContextValue {
   requisitions: Requisition[];
   purchaseOrders: PurchaseOrder[];
+  rfqs: RFQ[];
   notifications: AppNotification[];
   auditLog: AuditEntry[];
   users: User[];
@@ -218,6 +305,8 @@ interface AppContextValue {
   reload: () => Promise<void>;
   /** Load full requisition detail (attachments, comments, etc.) for the detail page. */
   loadRequisitionDetail: (id: string) => Promise<void>;
+  /** Load full RFQ detail (items, quotes, attachments) for the detail page. */
+  loadRFQDetail: (id: string) => Promise<void>;
   createRequisition: (data: Partial<Requisition>, currentUser: User) => Promise<string>;
   updateRequisition: (id: string, data: Partial<Requisition>, currentUser: User) => Promise<void>;
   submitRequisition: (id: string, currentUser: User) => Promise<void>;
@@ -230,6 +319,14 @@ interface AppContextValue {
   markAsPaid: (reqId: string, currentUser: User) => Promise<void>;
   uploadProofOfPayment: (reqId: string, popAttachment: Attachment, currentUser: User) => Promise<void>;
   generatePO: (reqId: string, currentUser: User) => Promise<string | null>;
+
+  // RFQ workflow
+  createRFQ: (data: Partial<RFQ>, currentUser: User) => Promise<string>;
+  submitRFQ: (rfqId: string, currentUser: User) => Promise<void>;
+  uploadRFQQuotes: (rfqId: string, quotes: any[], currentUser: User) => Promise<void>;
+  completeRFQQuotes: (rfqId: string, currentUser: User) => Promise<void>;
+  convertRFQToRequisition: (rfqId: string, quoteId: string, selectionJustification: string, currentUser: User) => Promise<string | null>;
+
   markNotificationRead: (id: string) => Promise<void>;
   markAllRead: (userId: string) => Promise<void>;
   updateUser: (id: string, data: Partial<User> & { password?: string }) => Promise<void>;
@@ -243,6 +340,7 @@ const AppContext = createContext<AppContextValue>({} as AppContextValue);
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [requisitions, setRequisitions] = useState<Requisition[]>([]);
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
+  const [rfqs, setRfqs] = useState<RFQ[]>([]);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [auditLog] = useState<AuditEntry[]>([]);
   const [users, setUsers] = useState<User[]>([]);
@@ -253,17 +351,31 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // Do NOT setLoading(true) here — it causes users[] to briefly appear empty
     // which makes currentUser null and flashes the login screen.
     try {
-      const [usersRes, reqRes, poRes, notifRes] = await Promise.all([
+      const results = await Promise.allSettled([
         fetchUsers(),
         fetchRequisitions({ page_size: '200' }),
         fetchPurchaseOrders(),
+        fetchRFQs({ page_size: '200' }),
         fetchNotifications(),
       ]);
-      // Update all state atomically in a single batch — no intermediate empty states
-      setUsers(usersRes.map(mapUser));
-      setRequisitions(reqRes.results.map(mapRequisition));
-      setPurchaseOrders(poRes.results.map(mapPO));
-      setNotifications(notifRes.map(mapNotification));
+
+      const [usersRes, reqRes, poRes, rfqRes, notifRes] = results;
+
+      if (usersRes.status === 'fulfilled') setUsers(usersRes.value.map(mapUser));
+      if (reqRes.status === 'fulfilled') setRequisitions(reqRes.value.results.map(mapRequisition));
+      if (poRes.status === 'fulfilled') setPurchaseOrders(poRes.value.results.map(mapPO));
+      if (rfqRes.status === 'fulfilled') setRfqs(rfqRes.value.results.map(mapRFQ));
+      if (notifRes.status === 'fulfilled') setNotifications(notifRes.value.map(mapNotification));
+
+      // If any endpoint fails, we log it but don't block the whole UI.
+      const failures = results
+        .map((r, i) => ({ r, i }))
+        .filter(({ r }) => r.status === 'rejected')
+        .map(({ r, i }) => ({
+          index: i,
+          error: (r as PromiseRejectedResult).reason,
+        }));
+      if (failures.length) console.error('Failed to load some app data:', failures);
     } catch (e) {
       console.error('Failed to load app data', e);
     } finally {
@@ -277,6 +389,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const fresh = await fetchRequisition(Number(id));
     const mapped = mapRequisition(fresh);
     setRequisitions(prev => prev.map(r => r.id === id ? mapped : r));
+    return fresh;
+  };
+
+  const refreshRFQ = async (id: string) => {
+    const fresh = await fetchRFQ(Number(id));
+    const mapped = mapRFQ(fresh);
+    setRfqs(prev => {
+      const exists = prev.some((r) => r.id === id);
+      if (exists) return prev.map((r) => (r.id === id ? mapped : r));
+      return [mapped, ...prev];
+    });
     return fresh;
   };
 
@@ -389,6 +512,76 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (toUpload.length) await refreshReq(createdId);
 
     return createdId;
+  };
+
+  // ─── RFQ workflow ─────────────────────────────────────────────────────────
+
+  const loadRFQDetail = async (id: string) => {
+    await refreshRFQ(id);
+  };
+
+  const createRFQ = async (data: Partial<RFQ>, currentUser: User): Promise<string> => {
+    const created = await apiCreateRFQ({
+      type: data.type || 'Supplier Payment (Normal)',
+      department: data.department || currentUser.department,
+      cost_center: data.costCenter || '',
+      budget_available: data.budgetAvailable ?? true,
+      currency: data.currency || 'USD',
+      description: data.description || '',
+      justification: data.justification || '',
+      amount_estimated: data.amountEstimated ?? 0,
+      items: (data.items || []).map((it, idx) => ({
+        description: it.description || '',
+        quantity: it.quantity || 1,
+        unit: it.unit || 'Unit',
+        order: it.order ?? idx + 1,
+      })),
+    });
+    const createdId = String(created.id);
+    setRfqs(prev => [mapRFQ(created), ...prev.filter(r => r.id !== createdId)]);
+    return createdId;
+  };
+
+  const submitRFQ = async (rfqId: string, currentUser: User) => {
+    await apiSubmitRFQ(Number(rfqId));
+    await refreshRFQ(rfqId);
+    // Ensure in-app notifications appear immediately after submission.
+    try {
+      const notifRes = await fetchNotifications(Number(currentUser.id));
+      setNotifications(notifRes.map(mapNotification));
+    } catch {
+      // Non-fatal: notifications will appear on next reload.
+    }
+  };
+
+  const uploadRFQQuotes = async (rfqId: string, quotes: any[], currentUser: User) => {
+    await apiUploadRFQQuotes(Number(rfqId), { quotes });
+    await refreshRFQ(rfqId);
+  };
+
+  const completeRFQQuotes = async (rfqId: string, currentUser: User) => {
+    try {
+      await apiCompleteRFQQuotes(Number(rfqId));
+    } finally {
+      // Always refresh so the UI switches from procurement to requester view.
+      try { await refreshRFQ(rfqId); } catch { /* non-fatal */ }
+    }
+  };
+
+  const convertRFQToRequisition = async (
+    rfqId: string,
+    quoteId: string,
+    selectionJustification: string,
+    currentUser: User
+  ): Promise<string | null> => {
+    const converted = await apiConvertRFQToRequisition(Number(rfqId), {
+      quote_id: Number(quoteId),
+      selected_supplier_justification: selectionJustification,
+    });
+    const reqId = String(converted.id);
+    setRequisitions(prev => [mapRequisition(converted), ...prev.filter(r => r.id !== reqId)]);
+    await refreshRFQ(rfqId);
+    return reqId;
   };
 
   const updateRequisition = async (id: string, data: Partial<Requisition>, currentUser: User) => {
@@ -590,7 +783,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       await pushNotif(
         req.requesterId,
         'Requisition Approved – Pending Payment',
-        `Your requisition ${req.reqNumber} has been fully approved and is with the accountant for payment.`,
+        `Your requisition ${req.reqNumber} has been fully approved and is with the finance team for payment.`,
         'approval',
         reqId,
         { headline: 'Your internal requisition has been approved.', statusStage: 'AwaitingPaymentProcessing' },
@@ -856,13 +1049,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <AppContext.Provider value={{
-      requisitions, purchaseOrders, notifications, auditLog, users, loading, reload: loadAll,
+      requisitions, purchaseOrders, rfqs, notifications, auditLog, users, loading, reload: loadAll,
       loadRequisitionDetail: (id) => refreshReq(id).then(() => {}),
+      loadRFQDetail,
       createRequisition, updateRequisition, submitRequisition, approveStep,
       rejectRequisition, returnRejectedToDraft, cancelRequisition, addComment,
       markAsPendingPayment, markAsPaid, uploadProofOfPayment, generatePO,
       markNotificationRead, markAllRead, updateUser, toggleUserActive, addUser,
       resetAccount,
+      // RFQ workflow
+      createRFQ, submitRFQ, uploadRFQQuotes, completeRFQQuotes, convertRFQToRequisition,
     }}>
       {children}
     </AppContext.Provider>

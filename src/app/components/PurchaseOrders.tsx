@@ -9,8 +9,25 @@ import { FileText } from 'lucide-react';
 
 const LINE_HEIGHT = 5;
 const HALF = 0.5;
+const MARS_LOGO_URL = '/blue.png';
 
-function downloadPOAsPDF(po: PurchaseOrder) {
+async function loadLogoDataUrl(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(typeof reader.result === 'string' ? reader.result : null);
+      reader.onerror = () => reject(new Error('Failed to read logo blob'));
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function downloadPOAsPDF(po: PurchaseOrder) {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const pageW = doc.getPageWidth();
   const margin = 14;
@@ -31,17 +48,25 @@ function downloadPOAsPDF(po: PurchaseOrder) {
   doc.setFillColor(12, 35, 64); // mars-navy
   doc.rect(0, 0, pageW, 36, 'F');
   doc.setTextColor(255, 255, 255);
+  const logoDataUrl = await loadLogoDataUrl(MARS_LOGO_URL);
+  if (logoDataUrl) {
+    try {
+      doc.addImage(logoDataUrl, 'PNG', margin, 6, 24, 24, undefined, 'FAST');
+    } catch {
+      // non-fatal: continue without image if PDF runtime cannot decode it
+    }
+  }
   const leftHeaderW = pageW * HALF - margin - 4;
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
   const buyerLines = wrapText(po.buyerCompany, leftHeaderW);
-  doc.text(buyerLines, margin, 12);
+  doc.text(buyerLines, margin + 28, 12);
   doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
   const subLines = wrapText('Emergency Medical Services', leftHeaderW);
-  doc.text(subLines, margin, 12 + buyerLines.length * LINE_HEIGHT);
+  doc.text(subLines, margin + 28, 12 + buyerLines.length * LINE_HEIGHT);
   const addrLines = wrapText(po.buyerAddress, leftHeaderW);
-  doc.text(addrLines, margin, 12 + (buyerLines.length + subLines.length) * LINE_HEIGHT);
+  doc.text(addrLines, margin + 28, 12 + (buyerLines.length + subLines.length) * LINE_HEIGHT);
   // Right-aligned PO block
   doc.setFontSize(8);
   textRight('PURCHASE ORDER', pageW - margin, 10);
@@ -186,7 +211,7 @@ export function PurchaseOrders() {
           </div>
           <div className="ml-auto flex gap-3 flex-wrap w-full sm:w-auto">
             <button
-              onClick={() => downloadPOAsPDF(selectedPO)}
+              onClick={() => void downloadPOAsPDF(selectedPO)}
               className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-slate-300 text-slate-600 text-sm hover:bg-slate-50 transition-all w-full sm:w-auto"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -208,10 +233,8 @@ export function PurchaseOrders() {
             <div className="flex items-start justify-between">
               <div>
                 <div className="flex items-center gap-3 mb-3">
-                  <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-mars-red">
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9,22 9,12 15,12 15,22"/>
-                    </svg>
+                  <div className="h-10 w-16 rounded-lg bg-white/95 px-2 py-1 flex items-center justify-center">
+                    <img src={MARS_LOGO_URL} alt="MARS logo" className="max-h-full max-w-full object-contain" />
                   </div>
                   <div>
                     <div className="text-white font-bold text-lg">{selectedPO.buyerCompany}</div>

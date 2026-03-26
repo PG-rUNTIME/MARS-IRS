@@ -4,6 +4,11 @@ This repository contains the **MARS Internal Requisition System (IRS)**: a web a
 
 It is designed for **internal business operations**: requesters submit requisitions; approvers review/approve/reject; finance processes payment; auditors review history; administrators manage users and platform configuration (SMTP, database backup/restore).
 
+The platform also includes:
+- **RFQ workflow** (requester + procurement clerk collaboration, supplier quotations, conversion to requisition),
+- **Supplier master data management** (single/bulk create, suspend, searchable use in requisitions/RFQs),
+- **Annual department budgets** in **USD and ZIG** with utilization stats, 80%/90% alerts, and monthly consumption trends.
+
 ---
 
 ## Business requirements (what the system must do)
@@ -67,7 +72,7 @@ stateDiagram-v2
   Submitted --> Pending_Review: Approval step(s) advance
   Pending_Review --> Pending_Approval: Further approvals required
   Pending_Approval --> Pending_Payment: Fully approved
-  Pending_Payment --> Paid: Proof of Payment uploaded / payment completed
+  Pending_Payment --> Paid: Proof of Payment uploaded by finance team / payment completed
 
   Submitted --> Rejected: Reject (approver)
   Pending_Review --> Rejected: Reject (approver)
@@ -354,6 +359,7 @@ Recommended production pattern:
 - Configure SMTP using the admin UI (Email / SMTP settings).
 
 See `docs/PRODUCTION.md` for a checklist.
+Release history is tracked in `docs/RELEASE_NOTES.md`.
 
 ---
 

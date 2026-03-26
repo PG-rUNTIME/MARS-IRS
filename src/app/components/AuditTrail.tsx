@@ -2,10 +2,12 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router';
 import {
   fetchAuditRequisitionsList,
+  fetchAuditList,
   getAuditExportUrl,
   isApiEnabled as isAuditApiEnabled,
   downloadWithAuth,
   type ApiAuditRequisitionSummary,
+  type ApiAuditEntry,
 } from '../api/client';
 import { useApp } from '../context/AppContext';
 import { formatDateTime } from './shared/StatusBadge';
@@ -62,6 +64,7 @@ const PER_PAGE = 25;
 
 const FILTER_ACTIONS = Object.keys(ACTION_COLORS).sort();
 const FILTER_ROLES = Object.keys(ROLE_COLORS).sort();
+const NON_REQUISITION_ACTIONS = new Set(['Login', 'User Account Updated']);
 
 export function AuditTrail() {
   const navigate = useNavigate();
@@ -85,18 +88,43 @@ export function AuditTrail() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchAuditRequisitionsList({
-        page,
-        page_size: PER_PAGE,
-        search: search || undefined,
-        action: filterAction || undefined,
-        role: filterRole || undefined,
-        user: filterUser || undefined,
-        requisition_id: filterRequisition || undefined,
-        date_from: dateFrom || undefined,
-        date_to: dateTo || undefined,
-      });
-      setData(res);
+      if (filterAction && NON_REQUISITION_ACTIONS.has(filterAction)) {
+        const res = await fetchAuditList({
+          page,
+          page_size: PER_PAGE,
+          search: search || undefined,
+          action: filterAction || undefined,
+          role: filterRole || undefined,
+          user: filterUser || undefined,
+          requisition_id: filterRequisition || undefined,
+          date_from: dateFrom || undefined,
+          date_to: dateTo || undefined,
+        });
+        const mapped: ApiAuditRequisitionSummary[] = (res.results as ApiAuditEntry[]).map((e) => ({
+          requisition_id: e.requisition_id ? Number(e.requisition_id) : -e.id,
+          requisition_number: e.requisition_number,
+          requisition_currency: e.requisition_currency,
+          latest_timestamp: e.timestamp,
+          latest_action: e.action,
+          latest_user_name: e.user_name,
+          latest_user_role: e.user_role,
+          action_count: 1,
+        }));
+        setData({ count: res.count, results: mapped });
+      } else {
+        const res = await fetchAuditRequisitionsList({
+          page,
+          page_size: PER_PAGE,
+          search: search || undefined,
+          action: filterAction || undefined,
+          role: filterRole || undefined,
+          user: filterUser || undefined,
+          requisition_id: filterRequisition || undefined,
+          date_from: dateFrom || undefined,
+          date_to: dateTo || undefined,
+        });
+        setData(res);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load audit log');
       setData(null);
@@ -202,7 +230,7 @@ export function AuditTrail() {
   };
 
   const handleRowClick = (row: ApiAuditRequisitionSummary) => {
-    if (row.requisition_id) navigate(`/requisitions/${String(row.requisition_id)}`);
+    if (row.requisition_id && row.requisition_id > 0) navigate(`/requisitions/${String(row.requisition_id)}`);
   };
 
   return (
@@ -235,7 +263,7 @@ export function AuditTrail() {
         <Info className="size-4" />
         <AlertTitle>Access Controlled</AlertTitle>
         <AlertDescription>
-          This audit trail shows one row per requisition. Click a row to open the full requisition and see who did what and when in the activity log.
+          This audit trail shows one row per requisition. For actions like Login and User Account Updated, it shows matching activity rows.
         </AlertDescription>
       </Alert>
 

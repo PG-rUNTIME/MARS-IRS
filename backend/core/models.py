@@ -10,6 +10,7 @@ class User(models.Model):
         ('General Manager', 'General Manager'),
         ('Financial Controller', 'Financial Controller'),
         ('Head of Operations', 'Head of Operations'),
+        ('Procurement Clerk', 'Procurement Clerk'),
         ('System Administrator', 'System Administrator'),
         ('Auditor', 'Auditor'),
     ]
@@ -121,11 +122,193 @@ class Requisition(models.Model):
     submitted_at = models.DateTimeField(null=True, blank=True)
     paid_at = models.DateTimeField(null=True, blank=True)
 
+    # Optional link: RFQ that was converted into this requisition.
+    rfq = models.ForeignKey('RFQ', on_delete=models.SET_NULL, null=True, blank=True, related_name='converted_requisitions')
+
     class Meta:
         ordering = ['-created_at']
 
     def __str__(self):
         return self.req_number
+
+
+class RFQ(models.Model):
+    RFQ_TYPE_CHOICES = [
+        ('Petty Cash', 'Petty Cash'),
+        ('Supplier Payment (Normal)', 'Supplier Payment (Normal)'),
+        ('High-Value/CAPEX', 'High-Value/CAPEX'),
+    ]
+
+    STATUS_CHOICES = [
+        ('Draft', 'Draft'),
+        ('Pending Procurement', 'Pending Procurement'),
+        ('Pending Requester Selection', 'Pending Requester Selection'),
+        ('Converted', 'Converted'),
+        ('Cancelled', 'Cancelled'),
+    ]
+
+    rfq_number = models.CharField(max_length=32, unique=True, db_index=True)
+    type = models.CharField(max_length=32, choices=RFQ_TYPE_CHOICES, db_index=True)
+    requester = models.ForeignKey(User, on_delete=models.PROTECT, related_name='rfqs')
+    department = models.CharField(max_length=255, default='', db_index=True)
+    cost_center = models.CharField(max_length=255, default='')
+    budget_available = models.BooleanField(default=True)
+    currency = models.CharField(max_length=3, default='USD', db_index=True)
+    description = models.TextField(default='')
+    justification = models.TextField(default='')
+    amount_estimated = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    status = models.CharField(max_length=64, choices=STATUS_CHOICES, default='Draft', db_index=True)
+    selected_quote = models.ForeignKey('RFQQuote', on_delete=models.SET_NULL, null=True, blank=True, related_name='selected_for_rfq')
+    selected_supplier_justification = models.TextField(blank=True, default='')
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    procurement_completed_at = models.DateTimeField(null=True, blank=True)
+    converted_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.rfq_number
+
+
+class RFQItem(models.Model):
+    rfq = models.ForeignKey(RFQ, on_delete=models.CASCADE, related_name='items')
+    order = models.PositiveSmallIntegerField(default=0)
+    description = models.CharField(max_length=255, default='')
+    quantity = models.IntegerField(default=1)
+    unit = models.CharField(max_length=64, default='Unit')
+
+    class Meta:
+        ordering = ['order', 'id']
+
+    def __str__(self):
+        return f"{self.rfq.rfq_number} - item {self.order}"
+
+
+class RFQQuote(models.Model):
+    rfq = models.ForeignKey(RFQ, on_delete=models.CASCADE, related_name='quotes')
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='rfq_quotes_created')
+    supplier = models.ForeignKey('Supplier', on_delete=models.SET_NULL, null=True, blank=True, related_name='rfq_quotes')
+
+    supplier_name = models.CharField(max_length=255, default='')
+    supplier_email = models.EmailField(blank=True, default='')
+    supplier_phone = models.CharField(max_length=64, blank=True, default='')
+    supplier_address = models.TextField(blank=True, default='')
+    supplier_contact = models.CharField(max_length=255, blank=True, default='')
+
+    supplier_bank_name = models.CharField(max_length=255, blank=True, default='')
+    supplier_bank_account_name = models.CharField(max_length=255, blank=True, default='')
+    supplier_bank_account_number = models.CharField(max_length=128, blank=True, default='')
+    supplier_bank_branch = models.CharField(max_length=255, blank=True, default='')
+
+    quote_currency = models.CharField(max_length=3, default='USD', db_index=True)
+    quote_total_amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    quote_notes = models.TextField(blank=True, default='')
+    quote_valid_until = models.DateField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Quote {self.id} for {self.rfq.rfq_number}"
+
+
+class RFQQuoteItem(models.Model):
+    quote = models.ForeignKey(RFQQuote, on_delete=models.CASCADE, related_name='items')
+    rfq_item = models.ForeignKey(RFQItem, on_delete=models.CASCADE, related_name='quoted_as')
+
+    description = models.CharField(max_length=255, default='')
+    quantity = models.IntegerField(default=1)
+    unit = models.CharField(max_length=64, default='Unit')
+    unit_price = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    line_total = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+
+    class Meta:
+        ordering = ['quote_id', 'rfq_item_id']
+
+    def __str__(self):
+        return f"Quote item {self.quote_id}/{self.rfq_item_id}"
+
+
+class RFQQuoteAttachment(models.Model):
+    quote = models.ForeignKey(RFQQuote, on_delete=models.CASCADE, related_name='attachments')
+
+    name = models.CharField(max_length=255)
+    type = models.CharField(max_length=128, blank=True, default='')
+    size = models.CharField(max_length=32, blank=True, default='')
+    uploaded_by = models.CharField(max_length=255, blank=True, default='')
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    data_url = models.TextField(blank=True, default='')
+    file_path = models.CharField(max_length=512, blank=True, default='')
+
+    is_quote_document = models.BooleanField(default=True)
+
+    def __str__(self):
+        return f"{self.name} ({self.quote_id})"
+
+
+class Supplier(models.Model):
+    CATEGORY_CHOICES = [
+        ('Medical', 'Medical'),
+        ('Fuel', 'Fuel'),
+        ('ICT', 'ICT'),
+        ('Logistics', 'Logistics'),
+        ('Maintenance', 'Maintenance'),
+        ('Professional Services', 'Professional Services'),
+        ('Other', 'Other'),
+    ]
+
+    name = models.CharField(max_length=255, db_index=True)
+    category = models.CharField(max_length=64, choices=CATEGORY_CHOICES, default='Other', db_index=True)
+    physical_address = models.TextField(default='')
+    contact_email = models.EmailField(default='')
+    contact_person = models.CharField(max_length=255, default='')
+    active = models.BooleanField(default=True, db_index=True)
+    suspended = models.BooleanField(default=False, db_index=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='suppliers_created')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['name', 'id']
+
+    def __str__(self):
+        return self.name
+
+
+class DepartmentBudget(models.Model):
+    year = models.PositiveIntegerField(db_index=True)
+    department = models.CharField(max_length=255, db_index=True)
+    usd_budget = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    zig_budget = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    configured_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='department_budgets_configured')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('year', 'department')
+        ordering = ['-year', 'department']
+
+    def __str__(self):
+        return f"{self.department} budget {self.year}"
+
+
+class RFQEvent(models.Model):
+    rfq = models.ForeignKey('RFQ', on_delete=models.CASCADE, related_name='events')
+    order = models.PositiveSmallIntegerField(default=0)
+    status = models.CharField(max_length=64, default='')
+    label = models.CharField(max_length=255, default='')
+    actor = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='rfq_events')
+    actor_name = models.CharField(max_length=255, blank=True, default='')
+    actor_role = models.CharField(max_length=64, blank=True, default='')
+    timestamp = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['order', 'timestamp', 'id']
+
+    def __str__(self):
+        return f"{self.rfq.rfq_number} – {self.label}"
 
 
 class ApprovalStep(models.Model):
@@ -264,6 +447,7 @@ class AppNotification(models.Model):
     timestamp = models.DateTimeField(auto_now_add=True)
     read = models.BooleanField(default=False, db_index=True)
     requisition = models.ForeignKey(Requisition, on_delete=models.SET_NULL, null=True, blank=True, related_name='notifications')
+    rfq = models.ForeignKey('RFQ', on_delete=models.SET_NULL, null=True, blank=True, related_name='notifications')
     type = models.CharField(max_length=16, choices=TYPE_CHOICES, default='info')
 
     class Meta:

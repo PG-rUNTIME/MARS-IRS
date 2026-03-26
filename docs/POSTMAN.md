@@ -23,18 +23,12 @@ This guide explains how to authenticate and call the Django REST API from **Post
 
 | Environment | Base URL (use as `{{base_url}}`) |
 |-------------|----------------------------------|
-| **Docker Compose** (backend published on host) | `http://localhost:8001/api` |
-| **Django `runserver` on your machine** | `http://127.0.0.1:8000/api` |
-| **Production** | `https://your-backend-host/api` (no trailing slash required on variable) |
+| **Deployed backend (your server)** | `http://10.169.39.56:8001/api` |
+| **Production (generic)** | `https://your-backend-host/api` |
 
-**Important:** In Postman, either:
-
-- Set `base_url` to `http://localhost:8001/api` and use paths like `/auth/login/`, **or**
-- Set `base_url` to `http://localhost:8001` and use paths like `/api/auth/login/`.
-
-This document uses the pattern: **`{{base_url}}/auth/login/`** with `base_url` **including** `/api`.
-
-If your frontend uses **same-origin** `/api/` behind nginx, Postman still talks to the **backend** directly—use the backend host/port above, not the static site URL alone.
+This document uses the pattern: **`{{base_url}}/auth/login/`** (so `{{base_url}}` includes `/api`).
+With the deployed value above, your request URLs will look like:
+`http://10.169.39.56:8001/api/<endpoint-path>`.
 
 ---
 
@@ -62,7 +56,7 @@ Create a Postman **Environment** (e.g. `MARS IRS Local`) with:
 
 | Variable | Initial value | Purpose |
 |----------|---------------|---------|
-| `base_url` | `http://localhost:8001/api` | All request URLs |
+| `base_url` | `http://10.169.39.56:8001/api` | All request URLs |
 | `token` | *(empty)* | Filled after login |
 | `user_id` | *(empty)* | Optional: from login response |
 
@@ -72,16 +66,10 @@ Select this environment in the top-right dropdown before sending requests.
 
 1. Create a **Collection** for MARS IRS.
 2. Open the collection → **Authorization** tab.
-3. Type: **Bearer Token** is **not** used—choose **API Key** or manual header:
-   - Easiest: add a collection **Pre-request Script** is optional; simpler is a default header:
-4. Under the collection → **Variables** or use **Authorization → Type: No Auth** and add a header on the collection:
-
-Alternatively, add this **Collection variable** and reference it in every request:
-
-- Header: `Authorization`
-- Value: `Token {{token}}`
-
-(Postman does not have a built-in “Token ” prefix type; use the raw value `Token {{token}}` in the header value.)
+3. Set up an `Authorization` header for the collection (so it applies to all requests after login):
+   - Header name: `Authorization`
+   - Header value: `Token {{token}}`
+   - The backend expects the exact prefix `Token` followed by a space and your key.
 
 ### 3. Auto-save token after login (optional)
 
@@ -174,12 +162,20 @@ Legend: **Auth** = requires `Authorization: Token …`. **Roles** = extra permis
 | GET | `/requisitions/` | Yes | Query: `status`, `department`, `requester_id`, `page`, `page_size`. Paginated list. |
 | POST | `/requisitions/` | Yes | Create requisition (large payload: fields + `approval_chain` + optional `items` + supplier JSON). See [Example JSON bodies](#example-json-bodies). |
 | GET | `/requisitions/<id>/` | Yes | Full detail (chain, comments, attachments, items, audit, PO). |
-| PATCH | `/requisitions/<id>/` | Yes | Partial update; optional replace `approval_chain` / `items`; use `audit_action` / `audit_details` for audit line. |
+| PATCH | `/requisitions/<id>/` | Yes | Partial update; optional replace `approval_chain` / `items`; use `audit_action` / `audit_details` for audit line. **Payment-state mutations (`Pending Payment`, `Paid`, `paid_at`) are finance-team only** (`Accountant`, `Financial Controller`, `General Manager`). |
 | DELETE | `/requisitions/<id>/` | Yes | Delete requisition. |
 | POST | `/requisitions/<id>/comments/` | Yes | Body: `user_id`, `user_name`, `user_role`, `text`, `is_finance_note`. |
-| POST | `/requisitions/<id>/attachments/` | Yes | Body: `name`, `type`, `size`, `uploaded_by`, `data_url` (URL or `data:...;base64,...`), `is_proof_of_payment`. |
+| POST | `/requisitions/<id>/attachments/` | Yes | Body: `name`, `type`, `size`, `uploaded_by`, `data_url` (URL or `data:...;base64,...`), `is_proof_of_payment`. **If `is_proof_of_payment=true`, requisition must be `Pending Payment` and caller must be finance-team role (`Accountant`, `Financial Controller`, `General Manager`).** |
 | GET | `/attachments/<id>/download/` | Yes | Download file when stored on disk. |
 | POST | `/requisitions/<id>/generate-po/` | Yes | Generate purchase order. Optional body: `buyer_company`, `buyer_address`, `actor_user_id`, etc. |
+
+### Department budgets
+
+| Method | Path | Auth | Roles / notes |
+|--------|------|------|----------------|
+| GET | `/budgets/?year=<YYYY>` | Yes | View annual department budgets. Roles: `Financial Controller`, `General Manager`, `Accountant`, `Department Manager`. |
+| POST | `/budgets/` | Yes | **Financial Controller only.** Upsert annual department budget. Body: `year`, `department`, `usd_budget`, `zig_budget`. |
+| GET | `/budgets/stats/?year=<YYYY>` | Yes | Budget analytics (department + organisation totals), includes utilization percentages, threshold alerts (80/90), and monthly trend (`usd_consumed`, `zig_consumed`). Same view roles as budget GET. |
 
 ### Purchase orders
 
@@ -214,9 +210,11 @@ Legend: **Auth** = requires `Authorization: Token …`. **Roles** = extra permis
 | GET | `/audit/requisitions/` | Yes | Same roles. Summary per requisition; `page`, `page_size`. |
 | GET | `/audit/export/` | Yes | Same roles. Returns CSV download. |
 
+`/audit/requisitions/` only summarizes logs tied to a requisition. For system/user actions that are not requisition-linked (for example `Login`), use `/audit/`.
+
 ### Database & backups
 
-These routes use **`AllowAny`** in DRF but the implementation still expects a **`Token`** header for some operations; **`database/health/`** does not require a valid user in the current code. **Treat backup/restore as highly sensitive**—restrict by network/firewall in production. See `docs/PRODUCTION.md`.
+These routes use **`AllowAny`** (no token required). **Treat backup/restore as highly sensitive**—restrict by network/firewall in production. See `docs/PRODUCTION.md`.
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -224,7 +222,7 @@ These routes use **`AllowAny`** in DRF but the implementation still expects a **
 | GET | `/database/backups/` | List backup files. |
 | POST | `/database/backups/create/` | Body: optional `name`. Creates SQL backup. |
 | POST | `/database/backups/restore/` | Body: `filename`. **Destructive.** |
-| POST | `/database/backups/upload-restore/` | Upload + restore (multipart; see backend). |
+| POST | `/database/backups/upload-restore/` | Upload + restore (multipart/form-data). **Field name:** `file` (must be a `.sql`). |
 | GET | `/database/backups/<filename>/download/` | Download a backup file. |
 
 ### SMTP & email helpers
@@ -246,7 +244,7 @@ These routes use **`AllowAny`** in DRF but the implementation still expects a **
 ```json
 {
   "count": 123,
-  "next": "http://localhost:8001/api/requisitions/?page=2",
+  "next": "http://10.169.39.56:8001/api/requisitions/?page=2",
   "previous": null,
   "results": [ ... ]
 }
@@ -317,6 +315,30 @@ These routes use **`AllowAny`** in DRF but the implementation still expects a **
   "uploaded_by": "Jane Doe",
   "data_url": "https://example.com/file.pdf",
   "is_proof_of_payment": false
+}
+```
+
+### Upload POP (finance team only)
+
+```json
+{
+  "name": "proof-of-payment.pdf",
+  "type": "application/pdf",
+  "size": "220 KB",
+  "uploaded_by": "Finance Officer",
+  "data_url": "data:application/pdf;base64,JVBERi0xLjcK...",
+  "is_proof_of_payment": true
+}
+```
+
+### Create or update budget
+
+```json
+{
+  "year": 2026,
+  "department": "Information Technology",
+  "usd_budget": 50000,
+  "zig_budget": 200000
 }
 ```
 

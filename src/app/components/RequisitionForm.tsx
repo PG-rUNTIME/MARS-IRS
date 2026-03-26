@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import { useApp } from '../context/AppContext';
 import type { RequisitionType, Currency, SupplierEntry } from '../data/types';
+import { fetchSuppliers } from '../api/client';
 import { Banknote, BarChart3, FileText } from 'lucide-react';
 
 const CURRENCIES: Currency[] = ['USD', 'ZIG'];
@@ -34,6 +35,7 @@ interface LineItem {
 
 // Supplier entry with attached file objects (not persisted, converted to dataUrls before save)
 interface SupplierDraft extends Omit<SupplierEntry, 'quotationDataUrl' | 'taxClearanceDataUrl' | 'vatCertDataUrl'> {
+  supplierId?: string;
   quotationFile?: File | null;
   quotationDataUrl?: string;
   taxClearanceFile?: File | null;
@@ -43,8 +45,17 @@ interface SupplierDraft extends Omit<SupplierEntry, 'quotationDataUrl' | 'taxCle
 }
 
 function emptySupplier(): SupplierDraft {
-  return { name: '', email: '', phone: '', address: '' };
+  return { supplierId: '', name: '', email: '', phone: '', address: '' };
 }
+
+type ApprovedSupplier = {
+  id: string;
+  name: string;
+  category: string;
+  physicalAddress: string;
+  contactEmail: string;
+  contactPerson: string;
+};
 
 function Field({ label, required, children, hint }: { label: string; required?: boolean; children: React.ReactNode; hint?: string }) {
   return (
@@ -126,6 +137,8 @@ export function RequisitionForm() {
 
   // Multi-supplier state
   const [suppliers, setSuppliers] = useState<SupplierDraft[]>([emptySupplier()]);
+  const [approvedSuppliers, setApprovedSuppliers] = useState<ApprovedSupplier[]>([]);
+  const [approvedSuppliersLoading, setApprovedSuppliersLoading] = useState(false);
   const [preferredIdx, setPreferredIdx] = useState(0);
   const [preferredJustification, setPreferredJustification] = useState('');
 
@@ -140,6 +153,50 @@ export function RequisitionForm() {
   const [step, setStep] = useState<1 | 2>(1);
 
   const needsSupplier = type === 'Supplier Payment (Normal)' || type === 'High-Value/CAPEX';
+
+  useEffect(() => {
+    if (!needsSupplier) return;
+    setApprovedSuppliersLoading(true);
+    fetchSuppliers({ page_size: '500', status: 'active' })
+      .then((res) => {
+        const mapped: ApprovedSupplier[] = (res.results || [])
+          .filter((s: any) => s.active && !s.suspended)
+          .map((s: any) => ({
+            id: String(s.id),
+            name: s.name || '',
+            category: s.category || 'Other',
+            physicalAddress: s.physical_address || '',
+            contactEmail: s.contact_email || '',
+            contactPerson: s.contact_person || '',
+          }));
+        setApprovedSuppliers(mapped);
+      })
+      .catch(() => setApprovedSuppliers([]))
+      .finally(() => setApprovedSuppliersLoading(false));
+  }, [needsSupplier]);
+
+  useEffect(() => {
+    if (!needsSupplier || approvedSuppliers.length === 0) return;
+    setSuppliers((prev) =>
+      prev.map((s) => {
+        if (s.supplierId) return s;
+        const match = approvedSuppliers.find(
+          (a) =>
+            (s.name && a.name.toLowerCase() === s.name.toLowerCase()) ||
+            (s.email && a.contactEmail.toLowerCase() === s.email.toLowerCase())
+        );
+        if (!match) return s;
+        return {
+          ...s,
+          supplierId: match.id,
+          name: match.name,
+          email: match.contactEmail,
+          address: match.physicalAddress,
+          phone: '',
+        };
+      })
+    );
+  }, [needsSupplier, approvedSuppliers]);
 
   const lineTotal = lineItems.reduce((sum, it) => {
     const q = parseFloat(it.quantity) || 0;
@@ -178,8 +235,8 @@ export function RequisitionForm() {
     if (!costCenter) e.costCenter = 'Cost centre is required.';
 
     if (needsSupplier) {
-      // At least one supplier with a name
-      const filledSuppliers = suppliers.filter((s) => s.name.trim());
+      // At least one selected approved supplier
+      const filledSuppliers = suppliers.filter((s) => (s.supplierId || '').trim());
       if (filledSuppliers.length === 0) e.suppliers = 'At least one supplier is required.';
       if (filledSuppliers.length > 1 && !preferredJustification.trim()) {
         e.preferredJustification = 'Please provide a justification for your preferred supplier.';
@@ -262,9 +319,15 @@ export function RequisitionForm() {
     // Process supplier docs
     const processedSuppliers: SupplierEntry[] = await Promise.all(
       suppliers
-        .filter((s) => s.name.trim())
+        .filter((s) => (s.supplierId || '').trim())
         .map(async (s) => {
-          const entry: SupplierEntry = { name: s.name, email: s.email, phone: s.phone, address: s.address };
+          const selected = approvedSuppliers.find((x) => x.id === s.supplierId);
+          const entry: SupplierEntry = {
+            name: selected?.name || s.name,
+            email: selected?.contactEmail || s.email,
+            phone: '',
+            address: selected?.physicalAddress || s.address,
+          };
           if (s.quotationFile) { entry.quotationName = s.quotationFile.name; entry.quotationDataUrl = await readFileAsDataUrl(s.quotationFile); entry.quotationSize = `${(s.quotationFile.size / 1024).toFixed(1)} KB`; }
           else if (s.quotationDataUrl) { entry.quotationName = s.quotationName; entry.quotationDataUrl = s.quotationDataUrl; entry.quotationSize = s.quotationSize; }
           if (s.taxClearanceFile) { entry.taxClearanceName = s.taxClearanceFile.name; entry.taxClearanceDataUrl = await readFileAsDataUrl(s.taxClearanceFile); entry.taxClearanceSize = `${(s.taxClearanceFile.size / 1024).toFixed(1)} KB`; }
@@ -294,6 +357,10 @@ export function RequisitionForm() {
 
     // Preferred supplier becomes the primary supplier fields on the requisition
     const preferred = processedSuppliers[preferredIdx] ?? processedSuppliers[0];
+    const preferredSupplierId = suppliers[preferredIdx]?.supplierId || suppliers.find((s) => (s.supplierId || '').trim())?.supplierId;
+    const preferredMaster = preferredSupplierId
+      ? approvedSuppliers.find((s) => s.id === preferredSupplierId)
+      : undefined;
 
     return {
       type,
@@ -309,6 +376,7 @@ export function RequisitionForm() {
       supplierEmail: preferred?.email || undefined,
       supplierPhone: preferred?.phone || undefined,
       supplierAddress: preferred?.address || undefined,
+      supplierContact: preferredMaster?.contactPerson || undefined,
       suppliers: processedSuppliers.length ? processedSuppliers : undefined,
       preferredSupplierIndex: preferredIdx,
       preferredSupplierJustification: preferredJustification.trim() || undefined,
@@ -562,7 +630,7 @@ export function RequisitionForm() {
                 <div>
                   <h2 className="text-slate-800 font-semibold text-base">Supplier Details <span className="text-red-500">*</span></h2>
                   <p className="text-slate-500 text-sm mt-0.5">
-                    Add up to {MAX_SUPPLIERS} suppliers for comparison. At least one is required. Upload the quotation, tax clearance, and VAT certificate for each supplier.
+                    Select up to {MAX_SUPPLIERS} approved active suppliers for comparison. At least one is required. Upload the quotation, tax clearance, and VAT certificate for each supplier.
                   </p>
                 </div>
                 {suppliers.length < MAX_SUPPLIERS && (
@@ -590,13 +658,15 @@ export function RequisitionForm() {
                       setSuppliers((prev) => prev.filter((_, i) => i !== idx));
                       setPreferredIdx((prev) => (prev >= idx && prev > 0 ? prev - 1 : prev));
                     } : undefined}
+                    approvedSuppliers={approvedSuppliers}
+                    approvedSuppliersLoading={approvedSuppliersLoading}
                     readFileAsDataUrl={readFileAsDataUrl}
                   />
                 ))}
               </div>
 
               {/* Preferred supplier justification — only when more than one supplier */}
-              {suppliers.filter((s) => s.name.trim()).length > 1 && (
+              {suppliers.filter((s) => (s.supplierId || '').trim()).length > 1 && (
                 <div>
                   <Field label="Justification for Preferred Supplier" required hint={`Explain why Supplier ${preferredIdx + 1} (${suppliers[preferredIdx]?.name || '—'}) is the preferred choice.`}>
                     <textarea
@@ -703,6 +773,8 @@ interface SupplierCardProps {
   index: number;
   total: number;
   supplier: SupplierDraft;
+  approvedSuppliers: ApprovedSupplier[];
+  approvedSuppliersLoading: boolean;
   isPreferred: boolean;
   onSetPreferred: () => void;
   onChange: (field: keyof SupplierDraft, value: unknown) => void;
@@ -731,7 +803,35 @@ function DocUpload({ label, fileName, onFile }: { label: string; fileName?: stri
   );
 }
 
-function SupplierCard({ index, total, supplier, isPreferred, onSetPreferred, onChange, onRemove }: SupplierCardProps) {
+function SupplierCard({ index, total, supplier, approvedSuppliers, approvedSuppliersLoading, isPreferred, onSetPreferred, onChange, onRemove }: SupplierCardProps) {
+  const selected = approvedSuppliers.find((s) => s.id === supplier.supplierId);
+  const selectedLabel = selected ? `${selected.name} (${selected.category})` : '';
+  const [query, setQuery] = useState(selectedLabel || supplier.name || '');
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    setQuery(selectedLabel || supplier.name || '');
+  }, [selectedLabel, supplier.name]);
+
+  const filteredSuppliers = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return approvedSuppliers.slice(0, 50);
+    return approvedSuppliers
+      .filter((s) =>
+        `${s.name} ${s.category} ${s.contactPerson} ${s.contactEmail}`.toLowerCase().includes(q)
+      )
+      .slice(0, 50);
+  }, [approvedSuppliers, query]);
+
+  const pickSupplier = (choice: ApprovedSupplier) => {
+    setQuery(`${choice.name} (${choice.category})`);
+    onChange('supplierId', choice.id);
+    onChange('name', choice.name);
+    onChange('email', choice.contactEmail);
+    onChange('address', choice.physicalAddress);
+    onChange('phone', '');
+    setOpen(false);
+  };
   return (
     <div className={`rounded-xl border-2 p-4 transition-all ${isPreferred ? 'border-mars-red bg-mars-red-muted/20' : 'border-slate-200 bg-white'}`}>
       {/* Card header */}
@@ -757,23 +857,68 @@ function SupplierCard({ index, total, supplier, isPreferred, onSetPreferred, onC
         </div>
       </div>
 
-      {/* Contact fields */}
+      {/* Supplier selection */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
         <div>
-          <label className="block text-slate-600 text-xs mb-1">Supplier Name <span className="text-red-500">*</span></label>
-          <input value={supplier.name} onChange={(e) => onChange('name', e.target.value)} placeholder="Company name" className={inputClsCard} />
+          <label className="block text-slate-600 text-xs mb-1">Approved Supplier <span className="text-red-500">*</span></label>
+          <div className="relative">
+            <input
+              value={query}
+              placeholder="Search supplier name..."
+              onFocus={() => setOpen(true)}
+              onBlur={() => setTimeout(() => setOpen(false), 150)}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                onChange('supplierId', '');
+                onChange('name', '');
+                onChange('email', '');
+                onChange('address', '');
+                onChange('phone', '');
+                setOpen(true);
+              }}
+              className={inputClsCard}
+            />
+            {open && (
+              <div className="absolute z-20 mt-1 w-full max-h-56 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                {approvedSuppliersLoading ? (
+                  <div className="px-3 py-2 text-xs text-slate-500">Loading approved suppliers...</div>
+                ) : approvedSuppliers.length === 0 ? (
+                  <div className="px-3 py-2 text-xs text-amber-700 bg-amber-50">
+                    No approved suppliers found. Procurement must add suppliers in the Suppliers menu first.
+                  </div>
+                ) : filteredSuppliers.length === 0 ? (
+                  <div className="px-3 py-2 text-xs text-slate-500">No supplier match.</div>
+                ) : (
+                  filteredSuppliers.map((s) => (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        pickSupplier(s);
+                      }}
+                      className="w-full text-left px-3 py-2 hover:bg-slate-50 border-b last:border-b-0 border-slate-100"
+                    >
+                      <div className="text-sm text-slate-800">{s.name}</div>
+                      <div className="text-xs text-slate-500">{s.category} · {s.contactEmail || 'No email'}</div>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
         </div>
         <div>
-          <label className="block text-slate-600 text-xs mb-1">Phone</label>
-          <input value={supplier.phone} onChange={(e) => onChange('phone', e.target.value)} placeholder="+263 24 000 0000" className={inputClsCard} />
+          <label className="block text-slate-600 text-xs mb-1">Contact Person</label>
+          <input value={selected?.contactPerson || '—'} readOnly className={`${inputClsCard} bg-slate-50`} />
         </div>
         <div>
           <label className="block text-slate-600 text-xs mb-1">Email</label>
-          <input type="email" value={supplier.email} onChange={(e) => onChange('email', e.target.value)} placeholder="supplier@email.com" className={inputClsCard} />
+          <input type="email" value={selected?.contactEmail || '—'} readOnly className={`${inputClsCard} bg-slate-50`} />
         </div>
         <div>
           <label className="block text-slate-600 text-xs mb-1">Address</label>
-          <input value={supplier.address} onChange={(e) => onChange('address', e.target.value)} placeholder="Street, City" className={inputClsCard} />
+          <input value={selected?.physicalAddress || '—'} readOnly className={`${inputClsCard} bg-slate-50`} />
         </div>
       </div>
 

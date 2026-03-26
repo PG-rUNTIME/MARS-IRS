@@ -4,6 +4,23 @@ Use this checklist when deploying the IR system to production with Docker.
 
 ---
 
+## Today's changes (Mar 26, 2026)
+
+- Added **annual department budgets** (`USD` + `ZIG`) with:
+  - budget setup endpoint/UI (`/api/budgets/`, Budget Setup page),
+  - budget stats endpoint/UI (`/api/budgets/stats/`, Budget Stats page),
+  - **80% / 90% utilization alerts**,
+  - **monthly consumption trend** (USD and ZIG).
+- Updated payment security and workflow:
+  - **any finance-team member** (`Accountant`, `Financial Controller`, `General Manager`) can upload POP for `Pending Payment`,
+  - payment-state mutations are enforced server-side as finance-only,
+  - POP uploader role is now visible in requisition detail.
+- Audit trail UX fix:
+  - requisition-summary endpoint is used for requisition-linked events,
+  - non-requisition actions (e.g. `Login`) are fetched from detailed audit endpoint in UI.
+
+---
+
 ## Already production-friendly
 
 - **Django settings**: `DEBUG` and `ALLOWED_HOSTS` come from environment variables; production security (secure cookies, proxy SSL header) is enabled when `DEBUG` is False.
@@ -50,14 +67,54 @@ Use this checklist when deploying the IR system to production with Docker.
 
 ---
 
+## Rollout checklist (today's release)
+
+1. **Pull latest code**
+   - Deploy branch with backend + frontend + docs updates.
+
+2. **Rebuild and restart services**
+   - `docker compose up -d --build backend frontend`
+
+3. **Run migrations**
+   - `docker compose exec backend python manage.py migrate`
+
+4. **Sanity check backend boot**
+   - `docker compose logs backend --tail=120`
+   - Confirm migrations complete and gunicorn is running.
+
+5. **Smoke test (API)**
+   - Login works (`POST /api/auth/login/`).
+   - Budgets:
+     - create/update budget (`POST /api/budgets/` as Financial Controller),
+     - stats load (`GET /api/budgets/stats/?year=YYYY`) with alerts and monthly trend.
+   - Payment:
+     - finance user uploads POP on `Pending Payment`,
+     - requisition transitions to `Paid`.
+   - Audit:
+     - `Login` action filter returns records in Audit Trail.
+
+6. **Smoke test (UI)**
+   - Budget Setup page: department dropdown and save.
+   - Budget Stats page: alerts and monthly trend chart render.
+   - Requisition detail: POP uploader role badge appears after POP upload.
+
+7. **Post-deploy checks**
+   - Verify notifications still flow for approval/payment steps.
+   - Verify `backend/logs/mars_irs.log` has no new errors.
+
+---
+
 ## Important limitation: API authentication
 
-The API does **not** use server-side sessions or tokens. All endpoints use `AllowAny`; the backend does not verify that the caller is the user they claim to be. The frontend sends user identity (e.g. `actor_user_id`, `user_id`) in request bodies after login.
+The API uses **token authentication** (`Authorization: Token <key>`) for protected endpoints. Some utility endpoints (database backup/health tools) are intentionally open in the current implementation and should be restricted by network/firewall in production.
 
-- **Suitable for**: Trusted internal networks, or environments where the API is not exposed to the public internet (e.g. frontend and backend on the same private network or behind a single sign-on proxy).
-- **Risk if the API is public**: Anyone who can reach the API could, in principle, call it with arbitrary user IDs and perform actions as any user.
+- **Suitable for**: Internal networks and controlled environments.
+- **Risk if API/admin tools are public**: Backup/restore and other sensitive routes may be abused if not protected at the edge.
 
-To harden for a fully public deployment you would need to add authentication (e.g. session cookies, JWT, or API keys) and authorization checks on the backend so that each request is tied to a verified user and role.
+To harden for public exposure:
+- lock sensitive utility endpoints behind admin auth and/or reverse proxy access controls,
+- enforce strict server-side actor derivation (ignore client-provided actor IDs where possible),
+- add rate limiting and request monitoring.
 
 ---
 

@@ -26,3 +26,15 @@ class IsSystemAdministrator(HasRole):
 class IsAuditorOrFinancialController(HasRole):
     required_roles = ("Auditor", "Financial Controller")
 
+
+class IsProcurementClerk(HasRole):
+    required_roles = ("Procurement Clerk",)
+
+
+class IsRequester(HasRole):
+    required_roles = ("Requester",)
+
+
+class IsRequesterOrProcurementClerk(HasRole):
+    required_roles = ("Requester", "Procurement Clerk")
+

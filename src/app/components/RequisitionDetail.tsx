@@ -83,6 +83,10 @@ export function RequisitionDetail() {
   const canFinanceAction = canDoFinanceActions(currentUser.roles);
   const canViewFinanceNotesFlag = canViewFinanceNotes(currentUser.roles);
   const isAuditor = currentUser.roles.includes('Auditor');
+  const popAuditEntry = [...(req.auditLog || [])]
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+    .find((e) => e.action === 'Proof of Payment Uploaded');
+  const popUploaderRole = popAuditEntry?.userRole || undefined;
 
   const handleApprove = async () => {
     setLoading('approve');
@@ -182,6 +186,14 @@ export function RequisitionDetail() {
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
+          {req.rfqId && (
+            <button
+              onClick={() => navigate(`/rfqs/${req.rfqId}`)}
+              className="px-3.5 py-2 rounded-lg border border-blue-200 text-blue-700 text-sm bg-blue-50 hover:bg-blue-100 transition-all"
+            >
+              View Associated RFQ
+            </button>
+          )}
           {req.poGenerated && req.poNumber && (() => {
             const linkedPO = purchaseOrders.find((po) => po.requisitionId === req.id);
             return (
@@ -372,10 +384,10 @@ export function RequisitionDetail() {
             )}
           </Section>
 
-          {/* Payment processing: View PO + Upload Proof of Payment (accountant) */}
+          {/* Payment processing: View PO + Upload Proof of Payment (finance team) */}
           {req.status === 'Pending Payment' && canFinanceAction && (
             <Section title="Payment Processing">
-              <p className="text-slate-600 text-sm mb-4">Process payment outside the system, then upload proof of payment below. The requisition will be marked as Paid once POP is uploaded.</p>
+              <p className="text-slate-600 text-sm mb-4">Any finance team member can process payment outside the system and upload POP below. The requisition is marked as Paid once POP is uploaded.</p>
               {req.poGenerated && req.poNumber && (() => {
                 const linkedPO = purchaseOrders.find((po) => po.requisitionId === req.id);
                 return (
@@ -421,7 +433,16 @@ export function RequisitionDetail() {
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="text-slate-800 text-sm font-medium">{req.proofOfPayment.name}</div>
-                  <div className="text-slate-400 text-xs">Uploaded by {req.proofOfPayment.uploadedBy} · {req.proofOfPayment.uploadedAt ? formatDateTime(req.proofOfPayment.uploadedAt) : ''}</div>
+                  <div className="text-slate-400 text-xs">
+                    Uploaded by {req.proofOfPayment.uploadedBy}
+                    {popUploaderRole ? (
+                      <span className="ml-2 inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700">
+                        {popUploaderRole}
+                      </span>
+                    ) : null}
+                    {' · '}
+                    {req.proofOfPayment.uploadedAt ? formatDateTime(req.proofOfPayment.uploadedAt) : ''}
+                  </div>
                 </div>
                 {req.proofOfPayment.dataUrl && (
                   <a

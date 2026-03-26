@@ -12,6 +12,12 @@ import { UserManagement } from './components/UserManagement';
 import { DatabaseHealthBackup } from './components/DatabaseHealthBackup';
 import { EmailSmtpSettings } from './components/EmailSmtpSettings';
 import { useAuth } from './context/AuthContext';
+import { RFQList } from './components/RFQList';
+import { RFQForm } from './components/RFQForm';
+import { RFQDetail } from './components/RFQDetail';
+import { SupplierManagement } from './components/SupplierManagement';
+import { BudgetManagement } from './components/BudgetManagement';
+import { BudgetStats } from './components/BudgetStats';
 
 // Role guard: user must have at least one of the allowed roles (multi-role aware)
 function RequireRole({ roles, redirectTo = '/dashboard', children }: { roles?: string[]; redirectTo?: string; children: React.ReactNode }) {
@@ -25,13 +31,20 @@ function RequireRole({ roles, redirectTo = '/dashboard', children }: { roles?: s
   return <Navigate to={redirectTo} replace />;
 }
 
+function HomeRedirect() {
+  const { currentUser } = useAuth();
+  if (!currentUser) return null;
+  if (currentUser.roles.includes('Procurement Clerk')) return <Navigate to="/actioned-rfqs" replace />;
+  return <Navigate to="/dashboard" replace />;
+}
+
 export function createAppRouter(onLogout: () => void) {
   return createBrowserRouter([
     {
       path: '/',
       element: <Layout onLogout={onLogout} />,
       children: [
-        { index: true, element: <Navigate to="/dashboard" replace /> },
+        { index: true, element: <HomeRedirect /> },
         {
           path: 'dashboard',
           element: (
@@ -49,10 +62,74 @@ export function createAppRouter(onLogout: () => void) {
           ),
         },
         {
+          path: 'my-rfqs',
+          element: (
+            <RequireRole roles={['Requester']}>
+              <RFQList mode="my" />
+            </RequireRole>
+          ),
+        },
+        {
+          path: 'rfqs/new',
+          element: (
+            <RequireRole roles={['Requester']}>
+              <RFQForm />
+            </RequireRole>
+          ),
+        },
+        {
+          path: 'pending-rfqs',
+          element: (
+            <RequireRole roles={['Procurement Clerk']}>
+              <RFQList mode="pending" />
+            </RequireRole>
+          ),
+        },
+        {
+          path: 'actioned-rfqs',
+          element: (
+            <RequireRole roles={['Procurement Clerk']}>
+              <RFQList mode="actioned" />
+            </RequireRole>
+          ),
+        },
+        {
+          path: 'suppliers',
+          element: (
+            <RequireRole roles={['Procurement Clerk']}>
+              <SupplierManagement />
+            </RequireRole>
+          ),
+        },
+        {
+          path: 'budgets/setup',
+          element: (
+            <RequireRole roles={['Financial Controller']}>
+              <BudgetManagement />
+            </RequireRole>
+          ),
+        },
+        {
+          path: 'budgets/stats',
+          element: (
+            <RequireRole roles={['Department Manager', 'Accountant', 'General Manager', 'Financial Controller']}>
+              <BudgetStats />
+            </RequireRole>
+          ),
+        },
+        {
           path: 'requisitions/new',
           element: (
             <RequireRole roles={['Requester', 'Department Manager', 'Accountant', 'General Manager', 'Financial Controller', 'Head of Operations', 'System Administrator']}>
               <RequisitionForm />
+            </RequireRole>
+          ),
+        },
+        {
+          path: 'rfqs/:id',
+          element: (
+            <RequireRole roles={['Requester', 'Procurement Clerk', 'System Administrator', 'Department Manager', 'Accountant', 'General Manager', 'Financial Controller', 'Head of Operations', 'Auditor']}>
+              <RFQDetail />
             </RequireRole>
           ),
         },

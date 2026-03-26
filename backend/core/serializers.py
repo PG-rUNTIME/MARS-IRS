@@ -4,6 +4,7 @@ from .models import (
     User, UserRole, Requisition, ApprovalStep, ReqComment,
     Attachment, POItem, PurchaseOrder, AppNotification,
     DelegationRecord, AuditEntry,
+    RFQ, RFQItem, RFQQuote, RFQQuoteItem, RFQQuoteAttachment, RFQEvent, Supplier, DepartmentBudget,
 )
 
 
@@ -112,6 +113,7 @@ class RequisitionListSerializer(serializers.ModelSerializer):
     requester_email = serializers.CharField(source='requester.email', read_only=True)
     current_approver_role = serializers.CharField(allow_null=True, required=False)
     approval_chain = ApprovalStepSerializer(many=True, read_only=True)
+    rfq_id = serializers.PrimaryKeyRelatedField(source='rfq', read_only=True)
 
     class Meta:
         model = Requisition
@@ -128,6 +130,7 @@ class RequisitionListSerializer(serializers.ModelSerializer):
             'asset_type', 'asset_specs', 'maintenance_item', 'maintenance_urgency',
             'created_at', 'updated_at', 'submitted_at', 'paid_at',
             'approval_chain',
+            'rfq_id',
         ]
 
 
@@ -159,6 +162,9 @@ class RequisitionWriteSerializer(serializers.ModelSerializer):
     requester_id = serializers.PrimaryKeyRelatedField(
         source='requester', queryset=User.objects.all()
     )
+    rfq_id = serializers.PrimaryKeyRelatedField(
+        source='rfq', queryset=RFQ.objects.all(), allow_null=True, required=False
+    )
     # Override EmailField → CharField so blank/null passes without email format validation
     supplier_email = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
@@ -169,6 +175,7 @@ class RequisitionWriteSerializer(serializers.ModelSerializer):
             'amount', 'currency', 'department', 'cost_center', 'budget_available',
             'requester_id', 'status', 'current_approver_role', 'is_capex',
             'po_generated', 'po_number',
+            'rfq_id',
             'supplier', 'supplier_email', 'supplier_phone', 'supplier_address', 'supplier_contact',
             'supplier_bank_name', 'supplier_bank_account_name', 'supplier_bank_account_number', 'supplier_bank_branch',
             'suppliers_json', 'preferred_supplier_index', 'preferred_supplier_justification',
@@ -233,10 +240,11 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
 class AppNotificationSerializer(serializers.ModelSerializer):
     recipient_id = serializers.PrimaryKeyRelatedField(source='recipient', read_only=True)
     requisition_id = serializers.PrimaryKeyRelatedField(source='requisition', read_only=True, allow_null=True)
+    rfq_id = serializers.PrimaryKeyRelatedField(source='rfq', read_only=True, allow_null=True)
 
     class Meta:
         model = AppNotification
-        fields = ['id', 'recipient_id', 'title', 'message', 'timestamp', 'read', 'requisition_id', 'type']
+        fields = ['id', 'recipient_id', 'title', 'message', 'timestamp', 'read', 'requisition_id', 'rfq_id', 'type']
 
 
 class DelegationRecordSerializer(serializers.ModelSerializer):
@@ -273,3 +281,142 @@ class AuditEntrySerializer(serializers.ModelSerializer):
 
     def get_requisition_currency(self, obj):
         return obj.requisition.currency if obj.requisition else None
+
+
+# ─── RFQ (Request for Quotation) ──────────────────────────────────────────────
+
+class RFQItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RFQItem
+        fields = ['id', 'order', 'description', 'quantity', 'unit']
+
+
+class RFQQuoteItemSerializer(serializers.ModelSerializer):
+    rfq_item_id = serializers.PrimaryKeyRelatedField(source='rfq_item', read_only=True)
+
+    class Meta:
+        model = RFQQuoteItem
+        fields = ['id', 'rfq_item_id', 'description', 'quantity', 'unit', 'unit_price', 'line_total']
+
+
+class RFQQuoteAttachmentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RFQQuoteAttachment
+        fields = ['id', 'name', 'type', 'size', 'uploaded_by', 'uploaded_at', 'data_url', 'file_path', 'is_quote_document']
+
+
+class RFQQuoteSerializer(serializers.ModelSerializer):
+    items = RFQQuoteItemSerializer(many=True, read_only=True)
+    attachments = RFQQuoteAttachmentSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = RFQQuote
+        fields = [
+            'id',
+            'rfq',
+            'created_by',
+            'supplier',
+            'supplier_name',
+            'supplier_email',
+            'supplier_phone',
+            'supplier_address',
+            'supplier_contact',
+            'supplier_bank_name',
+            'supplier_bank_account_name',
+            'supplier_bank_account_number',
+            'supplier_bank_branch',
+            'quote_currency',
+            'quote_total_amount',
+            'quote_notes',
+            'quote_valid_until',
+            'created_at',
+            'updated_at',
+            'items',
+            'attachments',
+        ]
+
+
+class SupplierSerializer(serializers.ModelSerializer):
+    created_by = serializers.PrimaryKeyRelatedField(read_only=True)
+
+    class Meta:
+        model = Supplier
+        fields = [
+            'id', 'name', 'category', 'physical_address', 'contact_email', 'contact_person',
+            'active', 'suspended', 'created_by', 'created_at', 'updated_at',
+        ]
+
+
+class DepartmentBudgetSerializer(serializers.ModelSerializer):
+    configured_by = serializers.PrimaryKeyRelatedField(read_only=True)
+
+    class Meta:
+        model = DepartmentBudget
+        fields = [
+            'id', 'year', 'department', 'usd_budget', 'zig_budget',
+            'configured_by', 'created_at', 'updated_at',
+        ]
+
+
+class RFQSerializer(serializers.ModelSerializer):
+    requester_id = serializers.PrimaryKeyRelatedField(source='requester', read_only=True)
+    requester_name = serializers.CharField(source='requester.name', read_only=True)
+    requester_email = serializers.EmailField(source='requester.email', read_only=True)
+    items = RFQItemSerializer(many=True, read_only=True)
+    quotes = RFQQuoteSerializer(many=True, read_only=True)
+    selected_quote_id = serializers.PrimaryKeyRelatedField(source='selected_quote', read_only=True)
+    selected_supplier_name = serializers.SerializerMethodField()
+    events = serializers.SerializerMethodField()
+    converted_requisition_number = serializers.SerializerMethodField()
+
+    class Meta:
+        model = RFQ
+        fields = [
+            'id',
+            'rfq_number',
+            'type',
+            'requester_id',
+            'requester_name',
+            'requester_email',
+            'department',
+            'cost_center',
+            'budget_available',
+            'currency',
+            'description',
+            'justification',
+            'amount_estimated',
+            'status',
+            'selected_quote_id',
+            'selected_supplier_name',
+            'selected_supplier_justification',
+            'submitted_at',
+            'procurement_completed_at',
+            'converted_at',
+            'items',
+            'quotes',
+            'events',
+            'converted_requisition_number',
+        ]
+
+    def get_events(self, obj):
+        events_qs = obj.events.all().order_by('order', 'timestamp', 'id')
+        return [
+            {
+                'id': str(e.id),
+                'order': e.order,
+                'status': e.status,
+                'label': e.label,
+                'actor_id': str(e.actor_id) if e.actor_id is not None else None,
+                'actor_name': e.actor_name or '',
+                'actor_role': e.actor_role or '',
+                'timestamp': e.timestamp,
+            }
+            for e in events_qs
+        ]
+
+    def get_converted_requisition_number(self, obj):
+        first = obj.converted_requisitions.all().order_by('-id').first() if hasattr(obj, 'converted_requisitions') else None
+        return first.req_number if first else None
+
+    def get_selected_supplier_name(self, obj):
+        return obj.selected_quote.supplier_name if obj.selected_quote_id else None

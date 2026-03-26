@@ -123,6 +123,7 @@ export interface ApiAuditEntry {
 export interface ApiRequisition {
   id: number;
   req_number: string;
+  rfq_id?: number | null;
   type: string;
   description: string;
   justification: string;
@@ -208,6 +209,7 @@ export interface ApiNotification {
   timestamp: string;
   read: boolean;
   requisition_id: number | null;
+  rfq_id: number | null;
   type: string;
 }
 
@@ -361,6 +363,247 @@ export function generatePO(reqId: number, data: {
   actor_user_id?: number; actor_user_name?: string; actor_user_role?: string;
 }): Promise<ApiPurchaseOrder> {
   return api(`/requisitions/${reqId}/generate-po/`, { method: 'POST', body: JSON.stringify(data) });
+}
+
+// ─── RFQ (Request for Quotation) ─────────────────────────────────────────────
+
+export interface ApiRFQItem {
+  id: number;
+  order: number;
+  description: string;
+  quantity: number;
+  unit: string;
+}
+
+export interface ApiRFQQuoteItem {
+  id: number;
+  rfq_item_id: number;
+  description: string;
+  quantity: number;
+  unit: string;
+  unit_price: string;
+  line_total: string;
+}
+
+export interface ApiRFQQuoteAttachment {
+  id: number;
+  name: string;
+  type: string;
+  size: string;
+  uploaded_by: string;
+  uploaded_at: string;
+  data_url: string;
+  file_path: string;
+  is_quote_document: boolean;
+}
+
+export interface ApiRFQQuote {
+  id: number;
+  rfq: number;
+  created_by: number | null;
+  supplier: number | null;
+  supplier_name: string;
+  supplier_email: string;
+  supplier_phone: string;
+  supplier_address: string;
+  supplier_contact: string;
+  supplier_bank_name: string;
+  supplier_bank_account_name: string;
+  supplier_bank_account_number: string;
+  supplier_bank_branch: string;
+  quote_currency: string;
+  quote_total_amount: string;
+  quote_notes: string;
+  quote_valid_until: string | null;
+  created_at: string;
+  updated_at: string;
+  items: ApiRFQQuoteItem[];
+  attachments: ApiRFQQuoteAttachment[];
+}
+
+export interface ApiRFQ {
+  id: number;
+  rfq_number: string;
+  type: string;
+  requester_id: number;
+  department: string;
+  cost_center: string;
+  budget_available: boolean;
+  currency: string;
+  description: string;
+  justification: string;
+  amount_estimated: string;
+  status: string;
+  selected_quote_id: number | null;
+  selected_supplier_name: string | null;
+  selected_supplier_justification: string;
+  submitted_at: string | null;
+  procurement_completed_at: string | null;
+  converted_at: string | null;
+  items: ApiRFQItem[];
+  quotes: ApiRFQQuote[];
+}
+
+export interface ApiSupplier {
+  id: number;
+  name: string;
+  category: string;
+  physical_address: string;
+  contact_email: string;
+  contact_person: string;
+  active: boolean;
+  suspended: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ApiDepartmentBudget {
+  id: number;
+  year: number;
+  department: string;
+  usd_budget: string;
+  zig_budget: string;
+}
+
+export interface ApiBudgetStats {
+  year: number;
+  alerts: Array<{
+    scope: 'department' | 'organisation';
+    department: string | null;
+    currency: 'USD' | 'ZIG';
+    utilization_pct: number;
+    threshold: 80 | 90;
+    level: 'warning' | 'critical';
+    message: string;
+  }>;
+  monthly_trend: Array<{
+    month: string;
+    usd_consumed: number;
+    zig_consumed: number;
+  }>;
+  departments: Array<{
+    department: string;
+    year: number;
+    usd_budget: number;
+    zig_budget: number;
+    usd_consumed: number;
+    zig_consumed: number;
+    usd_remaining: number;
+    zig_remaining: number;
+    usd_utilization_pct: number;
+    zig_utilization_pct: number;
+  }>;
+  totals: {
+    usd_budget: number;
+    zig_budget: number;
+    usd_consumed: number;
+    zig_consumed: number;
+    usd_remaining: number;
+    zig_remaining: number;
+    usd_utilization_pct: number;
+    zig_utilization_pct: number;
+  };
+}
+
+export function fetchRFQs(params: Record<string, string> = {}): Promise<Paginated<ApiRFQ>> {
+  const q = new URLSearchParams(params).toString();
+  return api(`/rfqs/${q ? '?' + q : ''}`);
+}
+
+export function fetchRFQ(id: number): Promise<ApiRFQ> {
+  return api(`/rfqs/${id}/`);
+}
+
+export function createRFQ(data: {
+  type: string;
+  department?: string;
+  cost_center?: string;
+  budget_available?: boolean;
+  currency?: string;
+  description?: string;
+  justification?: string;
+  amount_estimated?: number;
+  items: Array<{ description: string; quantity: number; unit: string; order?: number }>;
+}): Promise<ApiRFQ> {
+  return api('/rfqs/', { method: 'POST', body: JSON.stringify(data) });
+}
+
+export function submitRFQ(id: number): Promise<ApiRFQ> {
+  return api(`/rfqs/${id}/submit/`, { method: 'POST', body: JSON.stringify({}) });
+}
+
+export function uploadRFQQuotes(id: number, data: {
+  quotes: Array<any>;
+}): Promise<ApiRFQ> {
+  return api(`/rfqs/${id}/quotes/`, { method: 'POST', body: JSON.stringify(data) });
+}
+
+export function completeRFQQuotes(id: number): Promise<ApiRFQ> {
+  return api(`/rfqs/${id}/quotes-complete/`, { method: 'POST', body: JSON.stringify({}) });
+}
+
+export function convertRFQToRequisition(
+  id: number,
+  data: { quote_id: number; selected_supplier_justification: string }
+): Promise<ApiRequisition> {
+  return api(`/rfqs/${id}/convert/`, { method: 'POST', body: JSON.stringify(data) });
+}
+
+export function fetchSuppliers(params: Record<string, string> = {}): Promise<Paginated<ApiSupplier>> {
+  const q = new URLSearchParams(params).toString();
+  return api(`/suppliers/${q ? '?' + q : ''}`);
+}
+
+export function createSupplier(data: {
+  name: string;
+  category: string;
+  physical_address: string;
+  contact_email: string;
+  contact_person: string;
+  active?: boolean;
+  suspended?: boolean;
+}): Promise<ApiSupplier> {
+  return api('/suppliers/', { method: 'POST', body: JSON.stringify(data) });
+}
+
+export function bulkCreateSuppliers(data: {
+  suppliers: Array<{
+    name: string;
+    category: string;
+    physical_address: string;
+    contact_email: string;
+    contact_person: string;
+    active?: boolean;
+    suspended?: boolean;
+  }>;
+}): Promise<{
+  created_count: number;
+  skipped_count: number;
+  duplicates: Array<{ row: number; name: string; contact_email: string; reasons: string[] }>;
+  suppliers: ApiSupplier[];
+}> {
+  return api('/suppliers/bulk/', { method: 'POST', body: JSON.stringify(data) });
+}
+
+export function updateSupplier(id: number, data: Partial<ApiSupplier>): Promise<ApiSupplier> {
+  return api(`/suppliers/${id}/`, { method: 'PATCH', body: JSON.stringify(data) });
+}
+
+export function fetchBudgets(year: number): Promise<ApiDepartmentBudget[]> {
+  return api(`/budgets/?year=${year}`);
+}
+
+export function saveBudget(data: {
+  year: number;
+  department: string;
+  usd_budget: number;
+  zig_budget: number;
+}): Promise<ApiDepartmentBudget> {
+  return api('/budgets/', { method: 'POST', body: JSON.stringify(data) });
+}
+
+export function fetchBudgetStats(year: number): Promise<ApiBudgetStats> {
+  return api(`/budgets/stats/?year=${year}`);
 }
 
 // ─── Purchase Orders ──────────────────────────────────────────────────────────
