@@ -54,6 +54,15 @@ def _has_any_role(user, allowed_roles: tuple[str, ...]) -> bool:
     return any(r in allowed_roles for r in roles)
 
 
+def _is_finance_department_user(user) -> bool:
+    dep = (getattr(user, 'department', '') or '').strip().lower()
+    return 'finance' in dep
+
+
+def _can_process_finance_payment(user) -> bool:
+    return _has_any_role(user, FINANCE_TEAM_ROLES) or _is_finance_department_user(user)
+
+
 # ─── Pagination ───────────────────────────────────────────────────────────────
 
 class StandardPagination(PageNumberPagination):
@@ -371,7 +380,7 @@ def requisition_detail(request, pk):
             requested_status in ('Pending Payment', 'Paid')
             or requesting_paid_at_set
         )
-        if is_finance_payment_mutation and not _has_any_role(request.user, FINANCE_TEAM_ROLES):
+        if is_finance_payment_mutation and not _can_process_finance_payment(request.user):
             return Response({'error': 'Forbidden. Finance team only.'}, status=403)
         write_ser = RequisitionWriteSerializer(req, data=data, partial=True)
         if not write_ser.is_valid():
@@ -501,7 +510,7 @@ def add_attachment(request, req_pk):
     if is_pop:
         if req.status != 'Pending Payment':
             return Response({'error': 'Proof of payment can only be uploaded when requisition is Pending Payment.'}, status=400)
-        if not _has_any_role(request.user, FINANCE_TEAM_ROLES):
+        if not _can_process_finance_payment(request.user):
             return Response({'error': 'Forbidden. Finance team only.'}, status=403)
 
     data_url = request.data.get('data_url', '') or ''

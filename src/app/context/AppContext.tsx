@@ -3,7 +3,7 @@ import type {
   Requisition, PurchaseOrder, AppNotification, AuditEntry, User,
   RequisitionType, UserRole, ApprovalStep, POItem, Attachment, SupplierEntry, RFQ,
 } from '../data/types';
-import { getPrimaryRole, FINANCE_ACTION_ROLES } from '../data/roleCapabilities';
+import { getPrimaryRole, FINANCE_ACTION_ROLES, isFinanceDepartment } from '../data/roleCapabilities';
 import {
   isApiEnabled,
   fetchUsers, createUser as apiCreateUser, updateUser as apiUpdateUser,
@@ -436,7 +436,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const notifyFinanceTeamPendingPayment = async (req: Requisition, reqId: string, actorUserId: string) => {
     for (const u of users) {
       if (u.id === actorUserId) continue;
-      if (!u.roles.some((r) => FINANCE_ACTION_ROLES.includes(r))) continue;
+      if (!u.roles.some((r) => FINANCE_ACTION_ROLES.includes(r)) && !isFinanceDepartment(u.department)) continue;
       await pushNotif(
         u.id,
         'Payment required',

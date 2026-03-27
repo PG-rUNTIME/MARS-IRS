@@ -37,8 +37,13 @@ export function hasSectionAccess(roles: UserRole[], section: string): boolean {
 /** Roles that can perform finance actions (mark payment, generate PO, etc.). */
 export const FINANCE_ACTION_ROLES: UserRole[] = ['Accountant', 'Financial Controller', 'General Manager'];
 
-export function canDoFinanceActions(roles: UserRole[]): boolean {
-  return roles.some((r) => FINANCE_ACTION_ROLES.includes(r));
+export function isFinanceDepartment(department?: string): boolean {
+  const dep = (department || '').trim().toLowerCase();
+  return dep.includes('finance');
+}
+
+export function canDoFinanceActions(roles: UserRole[], department?: string): boolean {
+  return roles.some((r) => FINANCE_ACTION_ROLES.includes(r)) || isFinanceDepartment(department);
 }
 
 /** Roles that can view finance-only notes. */

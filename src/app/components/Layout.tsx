@@ -3,7 +3,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import { useApp } from '../context/AppContext';
 import type { UserRole, User } from '../data/types';
-import { hasSectionAccess, getPrimaryRole } from '../data/roleCapabilities';
+import { hasSectionAccess, getPrimaryRole, isFinanceDepartment } from '../data/roleCapabilities';
 import { MarsLogo } from './shared/MarsLogo';
 import { verifyPassword } from '../api/client';
 
@@ -218,6 +218,7 @@ export function Layout({ onLogout }: { onLogout: () => void }) {
   const pendingRFQs = rfqs.filter((r) => r.status === 'Pending Procurement').length;
   const actionedRFQs = rfqs.filter((r) => (r.events || []).some((e) => e.actorId === currentUser.id)).length;
   const pendingPaymentCount = requisitions.filter((r) => r.status === 'Pending Payment').length;
+  const canAccessPendingPayment = canAccess(currentUser.roles, 'pending-payment') || isFinanceDepartment(currentUser.department);
 
   const handleLogout = () => {
     onLogout();
@@ -299,10 +300,10 @@ export function Layout({ onLogout }: { onLogout: () => void }) {
           <NavItem to="/all-requisitions" icon={<ListIcon />} label="All Requisitions" />
         )}
 
-        {(canAccess(currentUser.roles, 'pending-payment') || canAccess(currentUser.roles, 'purchase-orders') || canAccess(currentUser.roles, 'reports') || canAccess(currentUser.roles, 'audit-trail')) && (
+        {(canAccessPendingPayment || canAccess(currentUser.roles, 'purchase-orders') || canAccess(currentUser.roles, 'reports') || canAccess(currentUser.roles, 'audit-trail')) && (
           <div className="text-sidebar-foreground/60 text-xs uppercase tracking-wider px-4 py-2 font-medium mt-3">Finance & Reporting</div>
         )}
-        {canAccess(currentUser.roles, 'pending-payment') && (
+        {canAccessPendingPayment && (
           <NavItem to="/pending-payment" icon={<PendingPaymentIcon />} label="Pending payment" badge={pendingPaymentCount} />
         )}
         {canAccess(currentUser.roles, 'purchase-orders') && (

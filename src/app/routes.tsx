@@ -18,6 +18,7 @@ import { RFQDetail } from './components/RFQDetail';
 import { SupplierManagement } from './components/SupplierManagement';
 import { BudgetManagement } from './components/BudgetManagement';
 import { BudgetStats } from './components/BudgetStats';
+import { isFinanceDepartment } from './data/roleCapabilities';
 
 // Role guard: user must have at least one of the allowed roles (multi-role aware)
 function RequireRole({ roles, redirectTo = '/dashboard', children }: { roles?: string[]; redirectTo?: string; children: React.ReactNode }) {
@@ -35,6 +36,15 @@ function HomeRedirect() {
   const { currentUser } = useAuth();
   if (!currentUser) return null;
   if (currentUser.roles.includes('Procurement Clerk')) return <Navigate to="/actioned-rfqs" replace />;
+  return <Navigate to="/dashboard" replace />;
+}
+
+function RequirePendingPaymentAccess({ children }: { children: React.ReactNode }) {
+  const { currentUser } = useAuth();
+  if (!currentUser) return null;
+  const roleAllowed = currentUser.roles.some((r) => ['Accountant', 'General Manager', 'Financial Controller'].includes(r));
+  const departmentAllowed = isFinanceDepartment(currentUser.department);
+  if (roleAllowed || departmentAllowed) return <>{children}</>;
   return <Navigate to="/dashboard" replace />;
 }
 
@@ -153,9 +163,9 @@ export function createAppRouter(onLogout: () => void) {
         {
           path: 'pending-payment',
           element: (
-            <RequireRole roles={['Accountant', 'General Manager', 'Financial Controller']}>
+            <RequirePendingPaymentAccess>
               <RequisitionList mode="pending-payment" />
-            </RequireRole>
+            </RequirePendingPaymentAccess>
           ),
         },
         {

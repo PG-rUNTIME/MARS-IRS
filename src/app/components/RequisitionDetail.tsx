@@ -80,7 +80,7 @@ export function RequisitionDetail() {
   const isCurrentApprover = req.currentApproverRole != null && currentUser.roles.includes(req.currentApproverRole) && ['Submitted', 'Pending Review', 'Pending Approval'].includes(req.status);
   const isRequester = req.requesterId === currentUser.id;
   const canCancel = isRequester && ['Draft', 'Submitted'].includes(req.status);
-  const canFinanceAction = canDoFinanceActions(currentUser.roles);
+  const canFinanceAction = canDoFinanceActions(currentUser.roles, currentUser.department);
   const canViewFinanceNotesFlag = canViewFinanceNotes(currentUser.roles);
   const isAuditor = currentUser.roles.includes('Auditor');
   const popAuditEntry = [...(req.auditLog || [])]
