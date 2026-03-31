@@ -96,8 +96,8 @@ export function SupplierManagement() {
   }, [search, suppliers]);
 
   const onAddSupplier = async () => {
-    if (!draft.name.trim() || !draft.contactEmail.trim() || !draft.contactPerson.trim()) {
-      setError('Name, contact email, and contact person are required.');
+    if (!draft.name.trim()) {
+      setError('Supplier name is required.');
       return;
     }
     setSaving(true);

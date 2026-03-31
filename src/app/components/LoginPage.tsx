@@ -22,6 +22,8 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     setLoading(false);
     if (result.success) {
       onLogin();
+      // Ensure role-based default landing always runs via HomeRedirect.
+      window.location.assign('/');
     } else {
       setError(result.error || 'Login failed.');
     }

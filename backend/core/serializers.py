@@ -345,6 +345,13 @@ class SupplierSerializer(serializers.ModelSerializer):
             'id', 'name', 'category', 'physical_address', 'contact_email', 'contact_person',
             'active', 'suspended', 'created_by', 'created_at', 'updated_at',
         ]
+        extra_kwargs = {
+            'name': {'required': True, 'allow_blank': False},
+            'category': {'required': False, 'allow_blank': True},
+            'physical_address': {'required': False, 'allow_blank': True},
+            'contact_email': {'required': False, 'allow_blank': True},
+            'contact_person': {'required': False, 'allow_blank': True},
+        }
 
 
 class DepartmentBudgetSerializer(serializers.ModelSerializer):
