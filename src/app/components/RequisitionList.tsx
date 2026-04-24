@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { useApp } from '../context/AppContext';
 import { StatusBadge, formatCurrency, formatDate } from './shared/StatusBadge';
 import type { RequisitionStatus, RequisitionType } from '../data/types';
+import { ORGANIZATION_DEPARTMENTS, resolveOrganizationDepartment } from '../data/departments';
 import { exportToExcel, exportToWord } from '../utils/exportUtils';
 
 interface RequisitionListProps {
@@ -32,12 +33,13 @@ export function RequisitionList({ mode }: RequisitionListProps) {
   const baseReqs = useMemo(() => {
     if (mode === 'my') return requisitions.filter((r) => r.requesterId === currentUser.id);
     if (mode === 'pending') return requisitions.filter((r) => r.status !== 'Rejected' && r.currentApproverRole != null && currentUser.roles.includes(r.currentApproverRole));
-    if (mode === 'department') return requisitions.filter((r) => r.department === currentUser.department);
+    if (mode === 'department') {
+      const mine = resolveOrganizationDepartment(currentUser.department);
+      return requisitions.filter((r) => resolveOrganizationDepartment(r.department) === mine);
+    }
     if (mode === 'pending-payment') return requisitions.filter((r) => r.status === 'Pending Payment');
     return requisitions;
   }, [requisitions, mode, currentUser]);
-
-  const departments = [...new Set(baseReqs.map((r) => r.department))].sort();
 
   const filtered = useMemo(() => {
     return baseReqs
@@ -53,7 +55,7 @@ export function RequisitionList({ mode }: RequisitionListProps) {
         if (search && !r.description.toLowerCase().includes(search.toLowerCase()) && !r.reqNumber.toLowerCase().includes(search.toLowerCase()) && !r.requesterName.toLowerCase().includes(search.toLowerCase())) return false;
         if (filterStatus && r.status !== filterStatus) return false;
         if (filterType && r.type !== filterType) return false;
-        if (filterDept && r.department !== filterDept) return false;
+        if (filterDept && resolveOrganizationDepartment(r.department) !== filterDept) return false;
         return true;
       })
       .sort((a, b) => {
@@ -67,12 +69,13 @@ export function RequisitionList({ mode }: RequisitionListProps) {
       });
   }, [baseReqs, search, filterStatus, filterType, filterDept, dateFrom, dateTo, sortField, sortDir]);
 
-  const listExportHeaders = ['Req #', 'Description', 'Type', 'Department', 'Amount', 'Currency', 'Status', 'Created', ...(mode !== 'my' ? ['Requester'] : [])];
+  const listExportHeaders = ['Req #', 'Description', 'Type', 'Department', 'Base', 'Amount', 'Currency', 'Status', 'Created', ...(mode !== 'my' ? ['Requester'] : [])];
   const listExportRows = filtered.map((r) => [
     r.reqNumber,
     r.description ?? '',
     r.type,
     r.department,
+    r.base ?? '',
     String(r.amount),
     r.currency,
     r.status,
@@ -98,7 +101,7 @@ export function RequisitionList({ mode }: RequisitionListProps) {
       : mode === 'pending'
         ? 'Requisitions awaiting your approval'
         : mode === 'department'
-          ? `All requisitions raised in ${currentUser.department} and their stages`
+          ? `All requisitions raised in ${resolveOrganizationDepartment(currentUser.department)} and their stages`
           : mode === 'pending-payment'
             ? 'Requisitions awaiting payment processing and proof of payment'
             : 'System-wide requisitions';
@@ -195,7 +198,7 @@ export function RequisitionList({ mode }: RequisitionListProps) {
               className="px-3 py-2 border border-slate-200 rounded-lg text-sm text-slate-700 focus:outline-none focus:border-red-300 bg-white min-w-[140px]"
             >
               <option value="">All Departments</option>
-              {departments.map((d) => <option key={d} value={d}>{d}</option>)}
+              {ORGANIZATION_DEPARTMENTS.map((d) => <option key={d} value={d}>{d}</option>)}
             </select>
           )}
           {(search || filterStatus || filterType || filterDept || dateFrom || dateTo) && (
@@ -237,6 +240,7 @@ export function RequisitionList({ mode }: RequisitionListProps) {
                   <th className="text-left px-5 py-3 text-slate-500 text-xs font-medium uppercase tracking-wide">Description</th>
                   {mode !== 'my' && <th className="text-left px-5 py-3 text-slate-500 text-xs font-medium uppercase tracking-wide">Requester</th>}
                   <th className="text-left px-5 py-3 text-slate-500 text-xs font-medium uppercase tracking-wide">Type</th>
+                  <th className="text-left px-5 py-3 text-slate-500 text-xs font-medium uppercase tracking-wide">Base</th>
                   <th className="text-left px-5 py-3 text-slate-500 text-xs font-medium uppercase tracking-wide cursor-pointer select-none" onClick={() => toggleSort('amount')}>
                     Amount <SortIcon field="amount" />
                   </th>
@@ -273,6 +277,7 @@ export function RequisitionList({ mode }: RequisitionListProps) {
                     <td className="px-5 py-3.5">
                       <span className="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-full whitespace-nowrap">{req.type}</span>
                     </td>
+                    <td className="px-5 py-3.5 text-slate-600 text-sm">{req.base || '—'}</td>
                     <td className="px-5 py-3.5 text-slate-800 text-sm font-medium">{formatCurrency(req.amount, req.currency)}</td>
                     <td className="px-5 py-3.5"><StatusBadge status={req.status} /></td>
                     {mode !== 'my' && <td className="px-5 py-3.5 text-slate-600 text-sm">{req.department}</td>}

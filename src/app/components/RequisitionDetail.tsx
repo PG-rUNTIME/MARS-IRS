@@ -282,6 +282,7 @@ export function RequisitionDetail() {
             <InfoRow label="Requisition Number" value={<span className="font-mono font-medium">{req.reqNumber}</span>} />
             <InfoRow label="Type" value={req.type} />
             <InfoRow label="Department" value={req.department} />
+            <InfoRow label="Base" value={req.base} />
             <InfoRow label="Cost Centre" value={req.costCenter} />
             <InfoRow label="Currency" value={req.currency} />
             <InfoRow label="Requested Amount" value={<span className="font-bold text-slate-900 text-base">{formatCurrency(req.amount, req.currency)}</span>} />

@@ -1,5 +1,11 @@
 import bcrypt
 from rest_framework import serializers
+from .bases import resolve_base
+from .departments import (
+    DEPARTMENT_COST_CENTRE,
+    ORGANIZATION_DEPARTMENTS_SET,
+    resolve_department,
+)
 from .models import (
     User, UserRole, Requisition, ApprovalStep, ReqComment,
     Attachment, POItem, PurchaseOrder, AppNotification,
@@ -67,6 +73,21 @@ class UserSerializer(serializers.ModelSerializer):
                 UserRole.objects.get_or_create(user=instance, role=r)
         return instance
 
+    def validate_department(self, value):
+        v = (value or '').strip()
+        if not v:
+            raise serializers.ValidationError('Department is required.')
+        if v not in ORGANIZATION_DEPARTMENTS_SET:
+            raise serializers.ValidationError(
+                'Invalid department. Choose one of the configured organisation departments.'
+            )
+        return v
+
+    def validate(self, attrs):
+        if self.instance is None and not (attrs.get('department') or '').strip():
+            raise serializers.ValidationError({'department': 'Department is required.'})
+        return attrs
+
 
 class ApprovalStepSerializer(serializers.ModelSerializer):
     approver_id = serializers.PrimaryKeyRelatedField(
@@ -119,7 +140,7 @@ class RequisitionListSerializer(serializers.ModelSerializer):
         model = Requisition
         fields = [
             'id', 'req_number', 'type', 'description', 'justification',
-            'amount', 'currency', 'department', 'cost_center', 'budget_available',
+            'amount', 'currency', 'department', 'cost_center', 'base', 'budget_available',
             'requester_id', 'requester_name', 'requester_email',
             'status', 'current_approver_role', 'is_capex', 'po_generated', 'po_number',
             'supplier', 'supplier_email', 'supplier_phone', 'supplier_address', 'supplier_contact',
@@ -172,7 +193,7 @@ class RequisitionWriteSerializer(serializers.ModelSerializer):
         model = Requisition
         fields = [
             'req_number', 'type', 'description', 'justification',
-            'amount', 'currency', 'department', 'cost_center', 'budget_available',
+            'amount', 'currency', 'department', 'cost_center', 'base', 'budget_available',
             'requester_id', 'status', 'current_approver_role', 'is_capex',
             'po_generated', 'po_number',
             'rfq_id',
@@ -218,6 +239,27 @@ class RequisitionWriteSerializer(serializers.ModelSerializer):
         for field in self._nullable_text_fields:
             if field in attrs and attrs[field] is None:
                 attrs[field] = ''
+
+        inst = self.instance
+        dept_raw = attrs.get('department', None)
+        if dept_raw is None:
+            dept_raw = getattr(inst, 'department', '') if inst else ''
+        else:
+            dept_raw = (dept_raw or '').strip()
+        resolved = resolve_department(dept_raw)
+        if not resolved:
+            raise serializers.ValidationError(
+                {'department': 'Department is required and must be a valid organisation department.'}
+            )
+        attrs['department'] = resolved
+        attrs['cost_center'] = DEPARTMENT_COST_CENTRE[resolved]
+
+        base_raw = attrs.get('base', None)
+        if base_raw is None:
+            base_raw = getattr(inst, 'base', '') if inst else ''
+        else:
+            base_raw = (base_raw or '').strip() if isinstance(base_raw, str) else str(base_raw or '')
+        attrs['base'] = resolve_base(base_raw)
         return attrs
 
 
@@ -364,6 +406,16 @@ class DepartmentBudgetSerializer(serializers.ModelSerializer):
             'configured_by', 'created_at', 'updated_at',
         ]
 
+    def validate_department(self, value):
+        v = (value or '').strip()
+        if not v:
+            raise serializers.ValidationError('Department is required.')
+        if v not in ORGANIZATION_DEPARTMENTS_SET:
+            raise serializers.ValidationError(
+                'Invalid department. Use one of the configured organisation departments.'
+            )
+        return v
+
 
 class RFQSerializer(serializers.ModelSerializer):
     requester_id = serializers.PrimaryKeyRelatedField(source='requester', read_only=True)
@@ -387,6 +439,7 @@ class RFQSerializer(serializers.ModelSerializer):
             'requester_email',
             'department',
             'cost_center',
+            'base',
             'budget_available',
             'currency',
             'description',

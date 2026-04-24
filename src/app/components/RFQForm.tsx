@@ -1,24 +1,18 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import { useApp } from '../context/AppContext';
-import type { RequisitionType, RFQItem, UserRole } from '../data/types';
+import type { RequisitionType, RFQItem } from '../data/types';
+import { ORGANIZATION_BASES, resolveBase } from '../data/bases';
+import {
+  ORGANIZATION_DEPARTMENTS,
+  costCentreForDepartment,
+  resolveOrganizationDepartment,
+} from '../data/departments';
 
 const TYPES: RequisitionType[] = ['Petty Cash', 'Supplier Payment (Normal)', 'High-Value/CAPEX'];
 
 const CURRENCIES = ['USD', 'ZIG'] as const;
-
-const DEPARTMENTS = [
-  'Operations',
-  'Logistics',
-  'Human Resources',
-  'Finance',
-  'Administration',
-  'Medical/Clinical',
-  'Information Technology',
-  'Management',
-  'Compliance',
-];
 
 const emptyItem = (): RFQItem => ({ id: '', order: 1, description: '', quantity: 1, unit: 'Unit' });
 
@@ -32,13 +26,26 @@ export function RFQForm() {
   const [justification, setJustification] = useState('');
   const [currency, setCurrency] = useState<(typeof CURRENCIES)[number]>('USD');
   const [amountEstimated, setAmountEstimated] = useState('');
-  const [department, setDepartment] = useState(currentUser?.department || 'Operations');
-  const [costCenter, setCostCenter] = useState('');
+  const [department, setDepartment] = useState(() =>
+    resolveOrganizationDepartment(currentUser?.department),
+  );
+  const [costCenter, setCostCenter] = useState(() =>
+    costCentreForDepartment(resolveOrganizationDepartment(currentUser?.department)),
+  );
+  const [base, setBase] = useState(() => resolveBase(''));
   const [budgetAvailable, setBudgetAvailable] = useState(true);
 
   const [items, setItems] = useState<RFQItem[]>([emptyItem()]);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    const d = resolveOrganizationDepartment(currentUser.department);
+    setDepartment(d);
+    setCostCenter(costCentreForDepartment(d));
+    setBase(resolveBase(''));
+  }, [currentUser?.id, currentUser?.department]);
 
   const validate = (): boolean => {
     const e: Record<string, string> = {};
@@ -85,6 +92,7 @@ export function RFQForm() {
           amountEstimated: amountEstimated ? Number(amountEstimated) : 0,
           department,
           costCenter,
+          base,
           budgetAvailable,
           items: items
             .filter((it) => it.description.trim())
@@ -163,13 +171,29 @@ export function RFQForm() {
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div>
+            <label className="block text-slate-700 text-sm mb-1.5">Base <span className="text-red-500">*</span></label>
+            <select
+              value={base}
+              onChange={(e) => setBase(resolveBase(e.target.value))}
+              className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-1 focus:ring-red-100 focus:border-red-400 transition-all bg-white"
+            >
+              {ORGANIZATION_BASES.map((b) => (
+                <option key={b} value={b}>{b}</option>
+              ))}
+            </select>
+          </div>
+          <div>
             <label className="block text-slate-700 text-sm mb-1.5">Department</label>
             <select
               value={department}
-              onChange={(e) => setDepartment(e.target.value)}
+              onChange={(e) => {
+                const d = e.target.value;
+                setDepartment(d);
+                setCostCenter(costCentreForDepartment(d));
+              }}
               className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-1 focus:ring-red-100 focus:border-red-400 transition-all bg-white"
             >
-              {DEPARTMENTS.map((d) => (
+              {ORGANIZATION_DEPARTMENTS.map((d) => (
                 <option key={d} value={d}>
                   {d}
                 </option>
@@ -177,16 +201,16 @@ export function RFQForm() {
             </select>
             {errors.department && <p className="text-red-500 text-xs mt-1">{errors.department}</p>}
           </div>
-          <div className="sm:col-span-2">
+          <div>
             <label className="block text-slate-700 text-sm mb-1.5">
               Cost centre <span className="text-red-500">*</span>
             </label>
             <input
               value={costCenter}
-              onChange={(e) => setCostCenter(e.target.value)}
-              placeholder="e.g. CC-OPS-001"
-              className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-1 focus:ring-red-100 focus:border-red-400 transition-all bg-white"
+              readOnly
+              className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm text-slate-700 bg-slate-50 cursor-not-allowed focus:outline-none"
             />
+            <p className="text-slate-400 text-xs mt-1">Filled automatically from the selected department.</p>
             {errors.costCenter && <p className="text-red-500 text-xs mt-1">{errors.costCenter}</p>}
           </div>
         </div>

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { fetchBudgets, saveBudget } from '../api/client';
-import { useApp } from '../context/AppContext';
+import { ORGANIZATION_DEPARTMENTS } from '../data/departments';
 
 type BudgetRow = {
   id: number;
@@ -11,7 +11,6 @@ type BudgetRow = {
 };
 
 export function BudgetManagement() {
-  const { users } = useApp();
   const [year, setYear] = useState<number>(new Date().getFullYear());
   const [rows, setRows] = useState<BudgetRow[]>([]);
   const [department, setDepartment] = useState('');
@@ -41,17 +40,6 @@ export function BudgetManagement() {
 
   const totalUsd = useMemo(() => rows.reduce((s, r) => s + Number(r.usd_budget || 0), 0), [rows]);
   const totalZig = useMemo(() => rows.reduce((s, r) => s + Number(r.zig_budget || 0), 0), [rows]);
-  const departmentOptions = useMemo(() => {
-    const fromUsers = users
-      .map((u) => (u.department || '').trim())
-      .filter(Boolean);
-    const fromBudgets = rows
-      .map((r) => (r.department || '').trim())
-      .filter(Boolean);
-    const all = Array.from(new Set([...fromUsers, ...fromBudgets]));
-    all.sort((a, b) => a.localeCompare(b));
-    return all;
-  }, [users, rows]);
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -81,7 +69,7 @@ export function BudgetManagement() {
     <div className="space-y-5">
       <div>
         <h1 className="text-slate-900">Annual Budget Setup</h1>
-        <p className="text-slate-500 text-sm">Configure per-department USD and ZIG budgets (Financial Controller).</p>
+        <p className="text-slate-500 text-sm">Configure annual USD and ZIG budgets per department (Financial Controller).</p>
       </div>
 
       <div className="bg-white rounded-xl border border-slate-200 p-4">
@@ -101,17 +89,12 @@ export function BudgetManagement() {
               <option value="" disabled>
                 Select department
               </option>
-              {departmentOptions.map((d) => (
+              {ORGANIZATION_DEPARTMENTS.map((d) => (
                 <option key={d} value={d}>
                   {d}
                 </option>
               ))}
             </select>
-            {departmentOptions.length === 0 && (
-              <p className="mt-1 text-xs text-amber-700">
-                No departments found yet. Add users with departments first.
-              </p>
-            )}
           </div>
           <div>
             <label className="block text-xs text-slate-600 mb-1">USD Budget</label>

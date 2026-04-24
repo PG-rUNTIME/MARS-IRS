@@ -120,6 +120,7 @@ export interface Requisition {
   currency: string;
   department: string;
   costCenter: string;
+  base: string;
   budgetAvailable: boolean;
   requesterId: string;
   requesterName: string;
@@ -258,6 +259,7 @@ export interface RFQ {
   requesterEmail?: string;
   department: string;
   costCenter: string;
+  base: string;
   budgetAvailable: boolean;
   currency: string;
   description: string;

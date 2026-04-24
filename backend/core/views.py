@@ -635,13 +635,31 @@ def rfq_list(request):
     except Exception:
         amount_est = Decimal('0')
 
+    from .bases import resolve_base
+    from .departments import (
+        DEPARTMENT_COST_CENTRE,
+        default_department,
+        resolve_department,
+    )
+
+    raw_dept = (data.get('department') or getattr(request.user, 'department', '') or '').strip()
+    resolved = resolve_department(raw_dept)
+    if resolved is None:
+        resolved = default_department() if not raw_dept else None
+    if resolved is None:
+        return Response({'error': 'Invalid department.', 'department': raw_dept}, status=400)
+    rfq_dept = resolved
+    rfq_cc = DEPARTMENT_COST_CENTRE[rfq_dept]
+    rfq_base = resolve_base((data.get('base') or '').strip())
+
     with transaction.atomic():
         rfq = RFQ.objects.create(
             rfq_number=_generate_number('RFQ'),
             type=rfq_type,
             requester_id=request.user.id,
-            department=data.get('department') or getattr(request.user, 'department', ''),
-            cost_center=data.get('cost_center') or '',
+            department=rfq_dept,
+            cost_center=rfq_cc,
+            base=rfq_base,
             budget_available=bool(data.get('budget_available', True)),
             currency=data.get('currency') or 'USD',
             description=data.get('description') or '',
@@ -1080,6 +1098,7 @@ def rfq_convert_to_requisition(request, pk):
             currency=quote.quote_currency,
             department=rfq.department,
             cost_center=rfq.cost_center,
+            base=rfq.base,
             budget_available=rfq.budget_available,
             requester_id=rfq.requester_id,
             status='Submitted',
@@ -1421,6 +1440,8 @@ def budget_stats(request):
     if not can_view.has_permission(request, None):
         return Response({'error': 'Forbidden.'}, status=403)
 
+    from .bases import ORGANIZATION_BASES
+
     year = int(request.query_params.get('year') or timezone.now().year)
     rows = DepartmentBudget.objects.filter(year=year).order_by('department')
     reqs = Requisition.objects.filter(created_at__year=year, status='Paid')
@@ -1433,22 +1454,32 @@ def budget_stats(request):
         rows = rows.filter(department=request.user.department)
         reqs = reqs.filter(department=request.user.department)
 
+    # Consumption for budget utilisation: all paid amounts in the department (every base).
     by_dept_consumed = {}
+    # Paid spend split by operational base (informational only — not a separate budget allocation).
+    by_base_consumed = {name: {'usd': 0.0, 'zig': 0.0} for name in ORGANIZATION_BASES}
     monthly = {}
     for r in reqs:
-        key = r.department
-        if key not in by_dept_consumed:
-            by_dept_consumed[key] = {'usd': 0.0, 'zig': 0.0}
+        dept = r.department
+        if dept not in by_dept_consumed:
+            by_dept_consumed[dept] = {'usd': 0.0, 'zig': 0.0}
         paid_dt = r.paid_at or r.updated_at or r.created_at
         month_key = f"{paid_dt.year:04d}-{paid_dt.month:02d}"
         if month_key not in monthly:
             monthly[month_key] = {'usd_consumed': 0.0, 'zig_consumed': 0.0}
+        amt = float(r.amount or 0)
         if (r.currency or '').upper() == 'ZIG':
-            by_dept_consumed[key]['zig'] += float(r.amount or 0)
-            monthly[month_key]['zig_consumed'] += float(r.amount or 0)
+            by_dept_consumed[dept]['zig'] += amt
+            monthly[month_key]['zig_consumed'] += amt
         else:
-            by_dept_consumed[key]['usd'] += float(r.amount or 0)
-            monthly[month_key]['usd_consumed'] += float(r.amount or 0)
+            by_dept_consumed[dept]['usd'] += amt
+            monthly[month_key]['usd_consumed'] += amt
+        rb = getattr(r, 'base', '') or 'Harare'
+        if rb in by_base_consumed:
+            if (r.currency or '').upper() == 'ZIG':
+                by_base_consumed[rb]['zig'] += amt
+            else:
+                by_base_consumed[rb]['usd'] += amt
 
     departments = []
     totals = {'usd_budget': 0.0, 'zig_budget': 0.0, 'usd_consumed': 0.0, 'zig_consumed': 0.0}
@@ -1498,6 +1529,15 @@ def budget_stats(request):
         totals['usd_consumed'] += usd_consumed
         totals['zig_consumed'] += zig_consumed
 
+    bases_summary = []
+    for name in ORGANIZATION_BASES:
+        c = by_base_consumed.get(name, {'usd': 0.0, 'zig': 0.0})
+        bases_summary.append({
+            'base': name,
+            'usd_consumed': c['usd'],
+            'zig_consumed': c['zig'],
+        })
+
     org_usd_pct = (totals['usd_consumed'] / totals['usd_budget'] * 100.0) if totals['usd_budget'] > 0 else 0.0
     org_zig_pct = (totals['zig_consumed'] / totals['zig_budget'] * 100.0) if totals['zig_budget'] > 0 else 0.0
     if org_usd_pct >= 80.0:
@@ -1534,6 +1574,7 @@ def budget_stats(request):
     return Response({
         'year': year,
         'departments': departments,
+        'bases': bases_summary,
         'alerts': alerts,
         'monthly_trend': trend,
         'totals': {

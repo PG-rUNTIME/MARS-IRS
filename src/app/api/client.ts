@@ -131,6 +131,7 @@ export interface ApiRequisition {
   currency: string;
   department: string;
   cost_center: string;
+  base: string;
   budget_available: boolean;
   requester_id: number;
   requester_name: string;
@@ -292,6 +293,7 @@ export interface CreateRequisitionPayload {
   currency: string;
   department: string;
   cost_center: string;
+  base: string;
   budget_available: boolean;
   requester_id: number;
   status: string;
@@ -428,6 +430,7 @@ export interface ApiRFQ {
   requester_id: number;
   department: string;
   cost_center: string;
+  base: string;
   budget_available: boolean;
   currency: string;
   description: string;
@@ -493,6 +496,12 @@ export interface ApiBudgetStats {
     usd_utilization_pct: number;
     zig_utilization_pct: number;
   }>;
+  /** Paid requisition totals by operational base (not a separate budget allocation). */
+  bases: Array<{
+    base: string;
+    usd_consumed: number;
+    zig_consumed: number;
+  }>;
   totals: {
     usd_budget: number;
     zig_budget: number;
@@ -518,6 +527,7 @@ export function createRFQ(data: {
   type: string;
   department?: string;
   cost_center?: string;
+  base?: string;
   budget_available?: boolean;
   currency?: string;
   description?: string;

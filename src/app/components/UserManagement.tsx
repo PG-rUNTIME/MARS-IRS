@@ -3,10 +3,10 @@ import { useApp } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
 import { formatDate } from './shared/StatusBadge';
 import type { User, UserRole } from '../data/types';
+import { ORGANIZATION_DEPARTMENTS } from '../data/departments';
 import { ROLE_CAPABILITIES } from '../data/roleCapabilities';
 
 const ROLES: UserRole[] = ['Requester', 'Department Manager', 'Accountant', 'General Manager', 'Financial Controller', 'Head of Operations', 'Procurement Clerk', 'System Administrator', 'Auditor'];
-const DEPARTMENTS = ['Operations', 'Logistics', 'Human Resources', 'Finance', 'Administration', 'Medical/Clinical', 'Information Technology', 'Management', 'Compliance'];
 
 const ROLE_COLORS: Record<UserRole, string> = {
   'Requester': 'bg-blue-100 text-blue-700',
@@ -201,7 +201,7 @@ export function UserManagement() {
                     <td className="px-5 py-3.5 text-slate-600 text-sm">
                       {isEditing ? (
                         <select value={editData.department ?? user.department} onChange={(e) => setEditData((d) => ({ ...d, department: e.target.value }))} className={inputCls}>
-                          {DEPARTMENTS.map((d) => <option key={d} value={d}>{d}</option>)}
+                          {ORGANIZATION_DEPARTMENTS.map((d) => <option key={d} value={d}>{d}</option>)}
                         </select>
                       ) : user.department}
                     </td>
@@ -318,7 +318,7 @@ export function UserManagement() {
               <div>
                 <label className="block text-slate-700 text-sm mb-1.5">Department</label>
                 <select value={newUser.department} onChange={(e) => setNewUser((u) => ({ ...u, department: e.target.value }))} className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm bg-white focus:outline-none">
-                  {DEPARTMENTS.map((d) => <option key={d} value={d}>{d}</option>)}
+                  {ORGANIZATION_DEPARTMENTS.map((d) => <option key={d} value={d}>{d}</option>)}
                 </select>
               </div>
               <div>

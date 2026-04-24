@@ -101,6 +101,7 @@ export function RFQList({ mode }: { mode: RFQListMode }) {
                   <th className="text-left px-5 py-3 text-slate-500 text-xs font-medium uppercase tracking-wide">RFQ #</th>
                   <th className="text-left px-5 py-3 text-slate-500 text-xs font-medium uppercase tracking-wide">Description</th>
                   <th className="text-left px-5 py-3 text-slate-500 text-xs font-medium uppercase tracking-wide">Type</th>
+                  <th className="text-left px-5 py-3 text-slate-500 text-xs font-medium uppercase tracking-wide">Base</th>
                   <th className="text-left px-5 py-3 text-slate-500 text-xs font-medium uppercase tracking-wide">Status</th>
                   <th className="text-left px-5 py-3 text-slate-500 text-xs font-medium uppercase tracking-wide">Created</th>
                 </tr>
@@ -119,6 +120,7 @@ export function RFQList({ mode }: { mode: RFQListMode }) {
                     <td className="px-5 py-3.5">
                       <span className="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-full whitespace-nowrap">{rfq.type}</span>
                     </td>
+                    <td className="px-5 py-3.5 text-slate-600 text-sm">{rfq.base || '—'}</td>
                     <td className="px-5 py-3.5">
                       <StatusPill status={rfq.status} />
                     </td>

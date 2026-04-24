@@ -15,8 +15,8 @@ class UserAdmin(admin.ModelAdmin):
 
 @admin.register(Requisition)
 class RequisitionAdmin(admin.ModelAdmin):
-    list_display = ('req_number', 'type', 'status', 'requester', 'amount', 'currency', 'created_at')
-    list_filter = ('status', 'type', 'currency')
+    list_display = ('req_number', 'type', 'status', 'base', 'requester', 'amount', 'currency', 'created_at')
+    list_filter = ('status', 'type', 'currency', 'base')
     search_fields = ('req_number', 'description')
 
 

@@ -15,6 +15,23 @@ type DepartmentBudgetStat = {
   zig_utilization_pct: number;
 };
 
+type BaseSpendStat = {
+  base: string;
+  usd_consumed: number;
+  zig_consumed: number;
+};
+
+type BudgetTotalsStat = {
+  usd_budget: number;
+  zig_budget: number;
+  usd_consumed: number;
+  zig_consumed: number;
+  usd_remaining: number;
+  zig_remaining: number;
+  usd_utilization_pct: number;
+  zig_utilization_pct: number;
+};
+
 type BudgetStatsResponse = {
   year: number;
   alerts: Array<{
@@ -32,7 +49,8 @@ type BudgetStatsResponse = {
     zig_consumed: number;
   }>;
   departments: DepartmentBudgetStat[];
-  totals: Omit<DepartmentBudgetStat, 'department' | 'year'>;
+  bases: BaseSpendStat[];
+  totals: BudgetTotalsStat;
 };
 
 export function BudgetStats() {
@@ -73,7 +91,7 @@ export function BudgetStats() {
       <div className="flex items-end justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-slate-900">Budget Statistics</h1>
-          <p className="text-slate-500 text-sm">Track annual budget consumption by department and organisation totals.</p>
+          <p className="text-slate-500 text-sm">Department budgets and utilisation; paid spend by base is shown for reporting only (not a separate allocation).</p>
         </div>
         <div>
           <label className="block text-xs text-slate-600 mb-1">Year</label>
@@ -130,6 +148,34 @@ export function BudgetStats() {
       </div>
 
       <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto">
+        <h3 className="px-4 pt-4 text-slate-800 text-sm font-semibold">Paid spend by base</h3>
+        <p className="px-4 pb-2 text-slate-500 text-xs">Paid requisitions attributed to each operational base. Department budgets are not split by base.</p>
+        <table className="w-full">
+          <thead>
+            <tr className="border-b border-slate-100 text-left text-xs uppercase tracking-wide text-slate-500">
+              <th className="px-4 py-2">Base</th>
+              <th className="px-4 py-2">USD paid</th>
+              <th className="px-4 py-2">ZIG paid</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(data?.bases || []).map((b) => (
+              <tr key={b.base} className="border-b border-slate-50">
+                <td className="px-4 py-2 text-sm font-medium text-slate-800">{b.base}</td>
+                <td className="px-4 py-2 text-sm text-slate-700">{b.usd_consumed.toFixed(2)}</td>
+                <td className="px-4 py-2 text-sm text-slate-700">{b.zig_consumed.toFixed(2)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {!loading && !error && data && (!data.bases || data.bases.length === 0) && (
+          <div className="px-4 py-3 text-sm text-slate-500">No paid requisitions with a base for this year.</div>
+        )}
+      </div>
+
+      <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto">
+        <h3 className="px-4 pt-4 text-slate-800 text-sm font-semibold">Department budgets</h3>
+        <p className="px-4 pb-2 text-slate-500 text-xs">Annual allocation per department; consumed is all paid requisitions for that department (every base).</p>
         <table className="w-full">
           <thead>
             <tr className="border-b border-slate-100 text-left text-xs uppercase tracking-wide text-slate-500">
@@ -143,7 +189,7 @@ export function BudgetStats() {
           <tbody>
             {data?.departments.map((d) => (
               <tr
-                key={d.department}
+                key={`${d.department}-${d.year}`}
                 className={`border-b border-slate-50 ${
                   d.usd_utilization_pct >= 90 || d.zig_utilization_pct >= 90
                     ? 'bg-mars-red-muted/40'

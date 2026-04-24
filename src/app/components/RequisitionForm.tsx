@@ -3,6 +3,12 @@ import { useNavigate, useParams } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import { useApp } from '../context/AppContext';
 import type { RequisitionType, Currency, SupplierEntry } from '../data/types';
+import { ORGANIZATION_BASES, resolveBase, type OrganizationBase } from '../data/bases';
+import {
+  ORGANIZATION_DEPARTMENTS,
+  costCentreForDepartment,
+  resolveOrganizationDepartment,
+} from '../data/departments';
 import { fetchSuppliers } from '../api/client';
 import { Banknote, BarChart3, FileText } from 'lucide-react';
 
@@ -11,20 +17,6 @@ const PETTY_CASH_LIMIT = 200;
 const MAX_SUPPLIERS = 3;
 
 const TYPES: RequisitionType[] = ['Petty Cash', 'Supplier Payment (Normal)', 'High-Value/CAPEX'];
-
-const DEPARTMENTS = ['Operations', 'Logistics', 'Human Resources', 'Finance', 'Administration', 'Medical/Clinical', 'Information Technology', 'Management', 'Compliance'];
-
-const COST_CENTERS: Record<string, string[]> = {
-  Operations: ['CC-OPS-001', 'CC-OPS-002', 'CC-OPS-003', 'CC-MED-001', 'CC-MED-002'],
-  Logistics: ['CC-LOG-001', 'CC-LOG-002', 'CC-LOG-003'],
-  'Human Resources': ['CC-HR-001', 'CC-HR-002'],
-  Finance: ['CC-FIN-001', 'CC-FIN-002'],
-  Administration: ['CC-ADM-001', 'CC-ADM-002'],
-  'Medical/Clinical': ['CC-MED-001', 'CC-MED-002'],
-  'Information Technology': ['CC-IT-001'],
-  Management: ['CC-MGT-001'],
-  Compliance: ['CC-COMP-001'],
-};
 
 interface LineItem {
   description: string;
@@ -103,8 +95,10 @@ export function RequisitionForm() {
     setJustification(r.justification);
     setAmount(String(r.amount));
     setCurrency(r.currency as Currency);
-    setDepartment(r.department);
-    setCostCenter(r.costCenter);
+    const resolvedDept = resolveOrganizationDepartment(r.department);
+    setDepartment(resolvedDept);
+    setCostCenter(costCentreForDepartment(resolvedDept));
+    setBase(resolveBase(r.base));
     setBudgetAvailable(r.budgetAvailable);
     setIsCapex(r.isCapex);
     if (r.suppliers?.length) {
@@ -130,8 +124,13 @@ export function RequisitionForm() {
   const [justification, setJustification] = useState('');
   const [amount, setAmount] = useState('');
   const [currency, setCurrency] = useState<Currency>('USD');
-  const [department, setDepartment] = useState(currentUser?.department || 'Operations');
-  const [costCenter, setCostCenter] = useState('');
+  const [department, setDepartment] = useState(() =>
+    resolveOrganizationDepartment(currentUser?.department),
+  );
+  const [costCenter, setCostCenter] = useState(() =>
+    costCentreForDepartment(resolveOrganizationDepartment(currentUser?.department)),
+  );
+  const [base, setBase] = useState<OrganizationBase>(() => resolveBase(''));
   const [budgetAvailable, setBudgetAvailable] = useState(true);
   const [isCapex, setIsCapex] = useState(false);
 
@@ -153,6 +152,15 @@ export function RequisitionForm() {
   const [step, setStep] = useState<1 | 2>(1);
 
   const needsSupplier = type === 'Supplier Payment (Normal)' || type === 'High-Value/CAPEX';
+
+  useEffect(() => {
+    if (editId) return;
+    if (!currentUser) return;
+    const d = resolveOrganizationDepartment(currentUser.department);
+    setDepartment(d);
+    setCostCenter(costCentreForDepartment(d));
+    setBase(resolveBase(''));
+  }, [editId, currentUser?.id, currentUser?.department]);
 
   useEffect(() => {
     if (!needsSupplier) return;
@@ -370,6 +378,7 @@ export function RequisitionForm() {
       currency,
       department,
       costCenter,
+      base,
       budgetAvailable,
       isCapex,
       supplier: preferred?.name || undefined,
@@ -511,17 +520,37 @@ export function RequisitionForm() {
                   )}
 
                   <Field label="Department" required>
-                    <select value={department} onChange={(e) => { setDepartment(e.target.value); setCostCenter(''); }} className={inputCls}>
-                      {DEPARTMENTS.map((d) => <option key={d} value={d}>{d}</option>)}
+                    <select
+                      value={department}
+                      onChange={(e) => {
+                        const d = e.target.value;
+                        setDepartment(d);
+                        setCostCenter(costCentreForDepartment(d));
+                      }}
+                      className={inputCls}
+                    >
+                      {ORGANIZATION_DEPARTMENTS.map((d) => (
+                        <option key={d} value={d}>{d}</option>
+                      ))}
                     </select>
                   </Field>
 
-                  <Field label="Cost Centre" required>
-                    <select value={costCenter} onChange={(e) => setCostCenter(e.target.value)} className={`${inputCls} ${errors.costCenter ? 'border-red-400' : ''}`}>
-                      <option value="">Select cost centre…</option>
-                      {(COST_CENTERS[department] || []).map((c) => <option key={c} value={c}>{c}</option>)}
-                    </select>
+                  <Field label="Cost Centre" required hint="Set automatically from the department you select.">
+                    <input
+                      type="text"
+                      readOnly
+                      value={costCenter}
+                      className={`${inputCls} bg-slate-50 text-slate-700 cursor-not-allowed ${errors.costCenter ? 'border-red-400' : ''}`}
+                    />
                     {errors.costCenter && <p className="text-red-500 text-xs mt-1">{errors.costCenter}</p>}
+                  </Field>
+
+                  <Field label="Base" required hint="Operational location for this requisition.">
+                    <select value={base} onChange={(e) => setBase(resolveBase(e.target.value))} className={inputCls}>
+                      {ORGANIZATION_BASES.map((b) => (
+                        <option key={b} value={b}>{b}</option>
+                      ))}
+                    </select>
                   </Field>
                 </div>
 

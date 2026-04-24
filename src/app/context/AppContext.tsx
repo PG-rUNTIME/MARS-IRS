@@ -3,6 +3,7 @@ import type {
   Requisition, PurchaseOrder, AppNotification, AuditEntry, User,
   RequisitionType, UserRole, ApprovalStep, POItem, Attachment, SupplierEntry, RFQ,
 } from '../data/types';
+import { resolveBase } from '../data/bases';
 import { getPrimaryRole, FINANCE_ACTION_ROLES, isFinanceDepartment } from '../data/roleCapabilities';
 import {
   isApiEnabled,
@@ -98,6 +99,7 @@ function mapRequisition(r: ApiRequisition): Requisition {
     currency: r.currency,
     department: r.department,
     costCenter: r.cost_center,
+    base: resolveBase(r.base),
     budgetAvailable: r.budget_available,
     requesterId: String(r.requester_id),
     requesterName: r.requester_name,
@@ -201,6 +203,7 @@ function mapRFQ(r: any): RFQ {
     requesterEmail: r.requester_email || undefined,
     department: r.department,
     costCenter: r.cost_center,
+    base: resolveBase(r.base),
     budgetAvailable: r.budget_available,
     currency: r.currency,
     description: r.description,
@@ -464,6 +467,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       currency: data.currency || 'USD',
       department: data.department || currentUser.department,
       cost_center: data.costCenter || '',
+      base: resolveBase(data.base ?? ''),
       budget_available: data.budgetAvailable ?? true,
       requester_id: Number(currentUser.id),
       status: 'Draft',
@@ -525,6 +529,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       type: data.type || 'Supplier Payment (Normal)',
       department: data.department || currentUser.department,
       cost_center: data.costCenter || '',
+      base: resolveBase(data.base ?? ''),
       budget_available: data.budgetAvailable ?? true,
       currency: data.currency || 'USD',
       description: data.description || '',
@@ -597,6 +602,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       currency: data.currency ?? req.currency,
       department: data.department ?? req.department,
       cost_center: data.costCenter ?? req.costCenter,
+      base: resolveBase(data.base ?? req.base),
       budget_available: data.budgetAvailable ?? req.budgetAvailable,
       is_capex: data.isCapex ?? req.isCapex,
       supplier: data.supplier ?? req.supplier,

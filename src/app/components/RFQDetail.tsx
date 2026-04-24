@@ -263,7 +263,7 @@ export function RFQDetail() {
               <RFQStatusTag status={rfq.status} />
               <span className="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-600 font-medium">{rfq.type}</span>
             </div>
-            <p className="text-slate-500 text-sm mt-1">{rfq.department || '—'} · {rfq.costCenter || '—'}</p>
+            <p className="text-slate-500 text-sm mt-1">{rfq.base || '—'} · {rfq.department || '—'} · {rfq.costCenter || '—'}</p>
           </div>
         </div>
         <div className="text-slate-500 text-sm">
@@ -287,7 +287,11 @@ export function RFQDetail() {
           )}
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div>
+            <div className="text-xs text-slate-500 uppercase tracking-wide">Base</div>
+            <div className="text-slate-800 text-sm">{rfq.base || '—'}</div>
+          </div>
           <div>
             <div className="text-xs text-slate-500 uppercase tracking-wide">Department</div>
             <div className="text-slate-800 text-sm">{rfq.department || '—'}</div>
